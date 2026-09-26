@@ -16,6 +16,7 @@ from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
 from runtime import webhooks as runtimeWebhooks
+from silly import cookieCog
 
 
 _skinMentionRegex = re.compile(r"^<@!?(\d+)>$")
@@ -702,6 +703,14 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
             )
 
         asyncio.create_task(_revealBum())
+        return
+
+    if cookieCog.cookieRequestRegex.search(content):
+        await interactionRuntime.safeChannelSend(
+            message.channel,
+            content=cookieCog.buildCookieMessage(message.author.mention),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
         return
 
     if isMentioningJane and _isAuraTrigger(content):

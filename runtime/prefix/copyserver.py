@@ -33,7 +33,12 @@ except ModuleNotFoundError as exc:
     def filterSnapshotChannelRows(configModule: Any, rows: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
         return list(rows or [])
 
-    def readSnapshot(path: os.PathLike[str] | str) -> dict[str, Any]:
+    def readSnapshot(
+        path: os.PathLike[str] | str,
+        *,
+        expectedGuildId: int = 0,
+    ) -> dict[str, Any]:
+        del expectedGuildId
         raise RuntimeError("Snapshot support is unavailable on this build.")
 
 
@@ -915,6 +920,12 @@ class CopyServerConfirmView(discord.ui.View):
                     contiguousCompletedRoles=int(self.resumeEstimate.get("contiguousCompletedRoles") or 0),
                     totalRoles=int(self.resumeEstimate.get("totalRoles") or 0),
                 )
+                runtimeCopyServerState.saveGuildProvenance(
+                    int(self.targetGuild.id),
+                    sourceGuildId=int(self.sourceGuildId),
+                    sourceGuildLabel=self.sourceGuildLabel,
+                    snapshotPath=str(self.snapshotPath),
+                )
 
                 async def _progress(detail: str) -> None:
                     await self._editStatusMessage(
@@ -933,6 +944,7 @@ class CopyServerConfirmView(discord.ui.View):
                     maxRoleCreates=int(getattr(self.config, "copyServerRoleBatchCreateLimit", 12) or 12),
                     maxRoleMutations=int(getattr(self.config, "copyServerRoleBatchMutationLimit", 18) or 18),
                     resumeRoleFloor=int(self.resumeRoleFloor or 0),
+                    expectedSourceGuildId=int(self.sourceGuildId),
                 )
             except Exception as exc:
                 self.lastPausedResult = {}
@@ -1379,7 +1391,7 @@ async def handleCopyServer(router: Any, message: discord.Message) -> bool:
         latestSnapshotPath = latestSnapshotPath if isinstance(latestSnapshotPath, Path) else Path(str(latestSnapshotPath))
 
     try:
-        snapshot = readSnapshot(latestSnapshotPath)
+        snapshot = readSnapshot(latestSnapshotPath, expectedGuildId=sourceGuildId)
     except Exception:
         await message.channel.send(
             "Copyserver could not read the latest main-server snapshot.",

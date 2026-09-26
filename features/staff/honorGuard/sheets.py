@@ -933,6 +933,7 @@ def _buildApprovedLogBatchData(
     updatesByRowPlatoon: dict[int, ApprovedLogUpdate],
     memberRows: dict[str, HonorGuardMemberRowBatch],
     platoonRows: dict[str, HonorGuardPlatoonRowBatch] | None = None,
+    promoteMembersWhenEligible: bool = True,
 ) -> tuple[list[dict], list[int], list[dict], list[int], list[int, dict]]:
     batchDataMember: dict[int, dict[str, tuple[str, Any]]] = {}
     touchedRowsMember: list[int] = []
@@ -958,16 +959,17 @@ def _buildApprovedLogBatchData(
             nextJuniorExamPassed = True
         if not member.ncoExamPassed and update.ncoExamPassed:
             nextNcoExamPassed = True
-        if member.rank == "Junior Guardsman" and nextTotalPoints >= 15 and (member.juniorExamPassed or nextJuniorExamPassed):
-            nextRank = "Guardsman"
-            nextPromotionEligible = False
-            organizeAfter = True
-        if member.rank == "Guardsman" and nextTotalPoints >= 50 and (member.ncoExamPassed or nextNcoExamPassed) and (member.activityStatus == 'Active' or nextActivityStatus == 'Active'):
-            nextPromotionEligible = True
-        if member.rank == "Junior Guardsman" and nextTotalPoints >= 50 and (member.ncoExamPassed or nextNcoExamPassed) and (member.juniorExamPassed or nextJuniorExamPassed) and (member.activityStatus == 'Active' or nextActivityStatus == 'Active'):
-            nextRank = "Guardsman"
-            nextPromotionEligible = True
-            organizeAfter = True
+        if promoteMembersWhenEligible:
+            if member.rank == "Junior Guardsman" and nextTotalPoints >= 15 and (member.juniorExamPassed or nextJuniorExamPassed):
+                nextRank = "Guardsman"
+                nextPromotionEligible = False
+                organizeAfter = True
+            if member.rank == "Guardsman" and nextTotalPoints >= 50 and (member.ncoExamPassed or nextNcoExamPassed) and (member.activityStatus == 'Active' or nextActivityStatus == 'Active'):
+                nextPromotionEligible = True
+            if member.rank == "Junior Guardsman" and nextTotalPoints >= 50 and (member.ncoExamPassed or nextNcoExamPassed) and (member.juniorExamPassed or nextJuniorExamPassed) and (member.activityStatus == 'Active' or nextActivityStatus == 'Active'):
+                nextRank = "Guardsman"
+                nextPromotionEligible = True
+                organizeAfter = True
 
         rowData = {}
         if nextRank is not None:
@@ -1088,7 +1090,7 @@ def applyApprovedLogsBatch(
 
     orbatMembers, orbatPlatoon = _loadOrbatData(eventPlatoon, rows, platoonRows, configModule=configModule)
 
-    batchDataMember, touchedRowsMember, batchDataPlatoon, touchedRowsPlatoon, organizeAfter = _buildApprovedLogBatchData(columns, platoonColumns, updatesByRowMember, updatesByRowPlatoon, orbatMembers, orbatPlatoon)
+    batchDataMember, touchedRowsMember, batchDataPlatoon, touchedRowsPlatoon, organizeAfter = _buildApprovedLogBatchData(columns, platoonColumns, updatesByRowMember, updatesByRowPlatoon, orbatMembers, orbatPlatoon, False)
 
     _engine.writeRowsColumnsBatch(_memberSheetKey, rows=touchedRowsMember, columnValuesByRow=batchDataMember)
     if len(touchedRowsPlatoon) > 0:

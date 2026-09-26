@@ -37,6 +37,7 @@ _coreExtensionNames = [
     "cogs.staff.voiceChatCog",
     "silly.hallCog",
     "silly.gamblingCog",
+    "silly.cookieCog",
 ]
 _optionalExtensionListModules = [
     "plugins.public.extensionList",

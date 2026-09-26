@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import urljoin
 
@@ -341,6 +342,313 @@ async def scanMoco(
     return ExternalSourceResult("Moco-co", "OK", "roblox", int(robloxUserId), matches, summary)
 
 
+# Rotector is served through the Rayward API. Only Flagged (1) and Confirmed (2)
+# are findings. Every other non-zero value is a process state, and Unflagged (0)
+# is never presented as safe per Rotector's terms of use.
+rotectorFlagNames: dict[int, str] = {
+    0: "Unflagged",
+    1: "Flagged",
+    2: "Confirmed",
+    3: "Queued",
+    4: "Provisional Flag",
+    5: "Mixed",
+    6: "Past Offender",
+    8: "Redacted",
+}
+rotectorActionableFlagTypes = frozenset({1, 2})
+_rotectorMatchFlagTypes = frozenset({1, 2, 4, 5, 6})
+_rotectorReasonLimit = 6
+_rotectorEvidenceLimit = 6
+
+
+def _isoDate(epochSeconds: int) -> str:
+    try:
+        return datetime.fromtimestamp(int(epochSeconds), timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return "unknown"
+
+
+def _retryAfterText(headers: Any) -> str:
+    retryAfter = str((headers or {}).get("Retry-After") or "").strip()
+    return f" Retry after {retryAfter}s." if retryAfter else ""
+
+
+async def _requestRaywardJson(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeoutSec: int,
+) -> tuple[int, Any, Optional[str]]:
+    """Fetch a Rayward reply. Unlike other sources, 404 and 503 are errors, not "no record"."""
+
+    timeout = aiohttp.ClientTimeout(total=max(2, int(timeoutSec or 10)))
+    try:
+        async with session.get(url, headers=headers, timeout=timeout) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except Exception:
+                payload = None
+            envelope = payload if isinstance(payload, dict) else {}
+            if response.status < 400 and envelope.get("success") is True:
+                return response.status, envelope.get("data"), None
+
+            message = str(envelope.get("error") or "").strip()[:200]
+            code = str(envelope.get("code") or "").strip()
+            requestId = str(envelope.get("requestId") or "").strip()
+            if response.status == 429:
+                label = "Daily lookup quota reached." if code == "DAILY_QUOTA_EXCEEDED" else "Rate limited."
+                error = f"{label}{_retryAfterText(response.headers)}"
+            elif response.status == 503:
+                error = "Rotector did not answer; the account's status is unknown."
+            elif response.status == 401:
+                error = "Rayward rejected the API key."
+            elif response.status == 403:
+                error = "Rayward API access is not approved or has been suspended."
+            elif response.status < 400:
+                error = "Unexpected Rayward response."
+            else:
+                error = f"HTTP {response.status}"
+            if message:
+                error += f" {message}"
+            if code:
+                error += f" [{code}]"
+            if requestId:
+                error += f" (request {requestId})"
+            return response.status, None, error
+    except asyncio.TimeoutError:
+        return 0, None, "Request timed out."
+    except aiohttp.ClientError as exc:
+        return 0, None, str(exc)
+
+
+def _compactRotectorEvidence(item: Any) -> Optional[str]:
+    # New evidence kinds can appear without a version bump. Skip unknowns
+    if not isinstance(item, dict):
+        return None
+    kind = str(item.get("kind") or "").strip()
+    if kind == "text":
+        text = str(item.get("text") or "").strip()
+        return text[:240] if text else None
+    if kind == "outfit":
+        name = str(item.get("name") or "").strip() or "Unnamed outfit"
+        if str(item.get("outfitId") or "") == "0":
+            name = f"{name} (current avatar)"
+        category = str(item.get("category") or "").strip()
+        description = str(item.get("description") or "").strip()
+        text = f"Outfit {name}"
+        if category:
+            text += f" [{category}]"
+        if description:
+            text += f": {description}"
+        return text[:240]
+    if kind == "discordUser":
+        discordId = str(item.get("discordId") or "").strip()
+        return f"Linked Discord account {discordId}" if discordId else None
+    if kind == "discordGuild":
+        # Sanitize the server name
+        safeName = str(item.get("safeName") or "").strip() or "Tracked server"
+        types = [str(value).strip() for value in list(item.get("types") or []) if str(value).strip()]
+        text = f"Server {safeName}"
+        if types:
+            text += f" [{', '.join(types[:3])}]"
+        extras: list[str] = []
+        joinedAt = _safeInt(item.get("joinedAt"))
+        if joinedAt > 0:
+            extras.append(f"joined {_isoDate(joinedAt)}")
+        lastSeen = _safeInt(item.get("lastSeen"))
+        if lastSeen > 0:
+            extras.append(f"last seen {_isoDate(lastSeen)}")
+        messages = _safeInt(item.get("messages"))
+        if messages > 0:
+            extras.append(f"{messages:,} message(s)")
+        if _asBool(item.get("staff")):
+            extras.append("staff")
+        if _asBool(item.get("booster")):
+            extras.append("booster")
+        if _asBool(item.get("verifiedLeft")):
+            extras.append("left")
+        if extras:
+            text += f" - {', '.join(extras)}"
+        return text[:240]
+    return None
+
+
+def _compactRotectorReason(reason: dict[str, Any]) -> dict[str, Any]:
+    # Flags sorted worst -> least worst
+    detectors: list[str] = []
+    summaries: list[str] = []
+    for source in list(reason.get("sources") or []):
+        if not isinstance(source, dict):
+            continue
+        label = str(source.get("label") or source.get("id") or "").strip()
+        if label and label not in detectors:
+            detectors.append(label)
+        summary = str(source.get("summary") or "").strip()
+        if summary:
+            summaries.append(summary[:200])
+    evidence: list[str] = []
+    for item in list(reason.get("evidence") or []):
+        line = _compactRotectorEvidence(item)
+        if line:
+            evidence.append(line)
+        if len(evidence) >= _rotectorEvidenceLimit:
+            break
+    reasonType = str(reason.get("type") or "").strip()
+    return {
+        "type": reasonType,
+        "title": str(reason.get("title") or reasonType or "Reason").strip(),
+        "detectors": detectors[:5],
+        "summaries": summaries[:3],
+        "evidence": evidence,
+    }
+
+
+def _normalizeRotectorPayload(
+    payload: Any,
+    *,
+    subjectType: str,
+    subjectId: int,
+    ownRobloxUserId: int = 0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    record = payload if isinstance(payload, dict) else {}
+    flagType = _safeInt(record.get("flagType"))
+    flagName = rotectorFlagNames.get(flagType, f"Flag type {flagType}")
+    linkedAccounts = [
+        {
+            "robloxUserId": _safeInt(row.get("robloxUserId")),
+            "robloxUsername": str(row.get("robloxUsername") or "").strip(),
+            "flagType": _safeInt(row.get("flagType")),
+            "flagName": rotectorFlagNames.get(_safeInt(row.get("flagType")), "Flagged"),
+        }
+        for row in list(record.get("linkedRobloxAccounts") or [])
+        if isinstance(row, dict) and _safeInt(row.get("robloxUserId")) > 0
+    ]
+    otherLinkedAccounts = [
+        row for row in linkedAccounts if row["robloxUserId"] != int(ownRobloxUserId or 0)
+    ]
+    summary: dict[str, Any] = {
+        "recordsFound": 1 if flagType in _rotectorMatchFlagTypes or otherLinkedAccounts else 0,
+        "flagType": flagType,
+        "flagName": flagName,
+        "statusLabel": str(record.get("statusLabel") or "").strip(),
+        "linkedRobloxAccountCount": len(otherLinkedAccounts),
+    }
+    if not summary["recordsFound"]:
+        return [], summary
+
+    reasons = [
+        _compactRotectorReason(reason)
+        for reason in list(record.get("reasons") or [])
+        if isinstance(reason, dict)
+    ][:_rotectorReasonLimit]
+    provisionalTitles = [
+        str(reason.get("title") or reason.get("type") or "").strip()
+        for reason in list(record.get("provisionalReasons") or [])
+        if isinstance(reason, dict) and str(reason.get("title") or reason.get("type") or "").strip()
+    ][:_rotectorReasonLimit]
+    reviewer = record.get("reviewer") if isinstance(record.get("reviewer"), dict) else {}
+    return [
+        {
+            "source": "Rotector",
+            "type": f"{subjectType}_safety",
+            "subjectType": subjectType,
+            "subjectId": subjectId,
+            "flagType": flagType,
+            "flagName": flagName,
+            "actionable": flagType in rotectorActionableFlagTypes,
+            "statusLabel": summary["statusLabel"],
+            "category": str(record.get("category") or "").strip(),
+            "categoryLabel": str(record.get("categoryLabel") or "").strip(),
+            "reasons": reasons,
+            "provisionalReasons": provisionalTitles,
+            "reviewed": bool(reviewer),
+            "lastUpdated": _safeInt(record.get("lastUpdated")) or None,
+            "linkedRobloxAccounts": otherLinkedAccounts[:5],
+        }
+    ], summary
+
+
+async def _scanRotector(
+    *,
+    subjectType: str,
+    subjectId: int,
+    ownRobloxUserId: int,
+    session: aiohttp.ClientSession,
+    configModule: Any,
+) -> ExternalSourceResult:
+    noSubjectReason = "no_roblox_user" if subjectType == "roblox" else "no_discord_user"
+    if int(subjectId or 0) <= 0:
+        return ExternalSourceResult("Rotector", "SKIPPED", subjectType, 0, [], {"reason": noSubjectReason})
+    enabledKey = "bgIntelligenceRotectorEnabled" if subjectType == "roblox" else "bgIntelligenceRotectorDiscordEnabled"
+    if not bool(_cfg(configModule, "bgIntelligenceRotectorEnabled", True)) or not bool(_cfg(configModule, enabledKey, True)):
+        return ExternalSourceResult("Rotector", "SKIPPED", subjectType, int(subjectId), [], {"reason": "disabled"})
+
+    apiKey = str(_cfg(configModule, "bgIntelligenceRaywardApiKey", "") or "").strip()
+    if not apiKey:
+        return ExternalSourceResult("Rotector", "SKIPPED", subjectType, int(subjectId), [], {"reason": "missing_api_key"})
+
+    baseUrl = _baseUrl(_cfg(configModule, "bgIntelligenceRaywardApiBaseUrl", "https://roscoe.rayward.app"), "https://roscoe.rayward.app")
+    url = urljoin(baseUrl, f"v2/lookup/rotector/{subjectType}/user/{int(subjectId)}")
+    timeoutSec = _safeInt(_cfg(configModule, "bgIntelligenceRaywardTimeoutSec", 10), 10)
+    statusCode, payload, error = await _requestRaywardJson(
+        session,
+        url,
+        headers={"Authorization": _bearerHeader(apiKey), "Accept": "application/json"},
+        timeoutSec=timeoutSec,
+    )
+    if error:
+        return ExternalSourceResult(
+            "Rotector",
+            "ERROR",
+            subjectType,
+            int(subjectId),
+            [],
+            {"httpStatus": statusCode},
+            error,
+        )
+
+    matches, summary = _normalizeRotectorPayload(
+        payload,
+        subjectType=subjectType,
+        subjectId=int(subjectId),
+        ownRobloxUserId=int(ownRobloxUserId or 0),
+    )
+    summary["httpStatus"] = statusCode
+    return ExternalSourceResult("Rotector", "OK", subjectType, int(subjectId), matches, summary)
+
+
+async def scanRotectorRoblox(
+    *,
+    robloxUserId: int,
+    session: aiohttp.ClientSession,
+    configModule: Any = config,
+) -> ExternalSourceResult:
+    return await _scanRotector(
+        subjectType="roblox",
+        subjectId=int(robloxUserId or 0),
+        ownRobloxUserId=int(robloxUserId or 0),
+        session=session,
+        configModule=configModule,
+    )
+
+
+async def scanRotectorDiscord(
+    *,
+    discordUserId: int,
+    robloxUserId: int,
+    session: aiohttp.ClientSession,
+    configModule: Any = config,
+) -> ExternalSourceResult:
+    return await _scanRotector(
+        subjectType="discord",
+        subjectId=int(discordUserId or 0),
+        ownRobloxUserId=int(robloxUserId or 0),
+        session=session,
+        configModule=configModule,
+    )
+
+
 async def scanExternalSources(
     *,
     discordUserId: int,
@@ -354,6 +662,13 @@ async def scanExternalSources(
         results = await asyncio.gather(
             scanTase(discordUserId=int(discordUserId or 0), session=session, configModule=configModule),
             scanMoco(robloxUserId=int(robloxUserId or 0), session=session, configModule=configModule),
+            scanRotectorRoblox(robloxUserId=int(robloxUserId or 0), session=session, configModule=configModule),
+            scanRotectorDiscord(
+                discordUserId=int(discordUserId or 0),
+                robloxUserId=int(robloxUserId or 0),
+                session=session,
+                configModule=configModule,
+            ),
             return_exceptions=True,
         )
 

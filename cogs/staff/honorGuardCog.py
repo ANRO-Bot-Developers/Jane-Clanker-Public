@@ -142,6 +142,10 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         await self._restoreEventViews()
 
     async def _restoreReviewViews(self) -> None:
+        # Handle review clicks on messages whose view was not restored below
+        self.bot.add_view(HonorGuardPointAwardReviewView(self, 0))
+        self.bot.add_view(HonorGuardSoloSentryReviewView(self, 0))
+        self.bot.add_view(HonorGuardEventReviewView(self, 0))
         pointAwardRows = await honorGuardService.listPointAwardPendingStatuses()
         for row in pointAwardRows:
             messageId = int(row.get("messageId") or 0)
@@ -783,7 +787,6 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             await self._safeReply(interaction, "This event is no longer open.")
             return
         if interaction.user.id == int(event.get("hostId") or 0):
-            #pass
             await self._safeReply(interaction, "You are the host of this event and cannot clock in as an attendee.")
             return
             
@@ -794,6 +797,9 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         attendees = await self._clockInEngine.listAttendees(int(eventId))
         if any(attendee.get("userId") == interaction.user.id and attendee.get("participantRole") != "HOST" for attendee in attendees):
             await self._safeReply(interaction, "You are already clocked in to this event.")
+            # await self._clockInEngine.removeAttendee(int(eventId), interaction.user.id)
+          	# await self._safeReply(interaction, "You have clocked out of this event.")       We will decide later if we will allow clock outs or not
+         	# await self._refreshEventMessageFromInteraction(eventId, interaction)
             return
             
         memberGroup = _getMemberGroup(interaction.user)
@@ -940,6 +946,33 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=False)
         await honorGuardService.updateAttendeePoints(recordId=int(attendee.get("recordId") or 0), points=points)
 
+    async def handleEditAllPoints(self, interaction: discord.Interaction, eventId: int, new_points: float, type: str) -> None:
+        event = await self._clockInEngine.getSession(int(eventId))
+        if not event:
+            await self._safeReply(interaction, "This event session no longer exists.")
+            return
+        if str(event.get("status") or "").upper() != "FINISHED":
+            await self._safeReply(interaction, "This event is not finished.")
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        if type == "QUOTA":
+            for attendee in await self._clockInEngine.listAttendees(int(eventId)):
+                if attendee.get("memberGroup") == "OFFICER":
+                    continue
+                if attendee.get("participantRole") != "ATTENDEE":
+                    continue
+                points = honorGuardService.HonorGuardPointDeltas(quotaPoints=new_points, eventPoints=attendee.get("eventPoints"))
+                await honorGuardService.updateAttendeePoints(recordId=int(attendee.get("recordId") or 0), points=points)
+        else:
+            for attendee in await self._clockInEngine.listAttendees(int(eventId)):
+                if attendee.get("memberGroup") == "OFFICER":
+                    continue
+                if attendee.get("participantRole") != "ATTENDEE":
+                    continue
+                points = honorGuardService.HonorGuardPointDeltas(quotaPoints=attendee.get("quotaPoints"), eventPoints=new_points)
+                await honorGuardService.updateAttendeePoints(recordId=int(attendee.get("recordId") or 0), points=points)
+	
     async def finishEvent(self, interaction: discord.Interaction, eventId: int) -> None:
         lock = self._eventLocks.setdefault(eventId, asyncio.Lock())
         async with lock:

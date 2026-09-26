@@ -41,6 +41,9 @@ serverSafetyPreservedChannelIds = []
 serverSafetyQuarantineThreshold = 5
 serverSafetyQuarantineWindowSec = 30
 serverSafetyAllowedUserIds = []
+serverSafetyRestoreVerifierRoleId = 0
+serverSafetyRestoreVerificationTimeoutSec = 21600
+serverSafetyRestoreVerificationBypassUserIds = []
 
 
 # == Project Workflow ==

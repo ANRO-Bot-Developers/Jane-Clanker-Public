@@ -123,10 +123,16 @@ class DestructiveActionGate:
         source: str,
         actionKey: str,
         actionLabel: str,
+        additionalGuildIds: set[int] | None = None,
     ) -> bool:
         guildId = int(getattr(getattr(interaction, "guild", None), "id", 0) or 0)
         userId = int(getattr(getattr(interaction, "user", None), "id", 0) or 0)
         guildAllowedIds = self._allowedGuildIds()
+        if guildAllowedIds:
+            for rawGuildId in additionalGuildIds or set():
+                parsedGuildId = _safeInt(rawGuildId)
+                if parsedGuildId > 0:
+                    guildAllowedIds.add(parsedGuildId)
         allowedUserIds = self._allowedUserIds()
 
         if guildId <= 0:

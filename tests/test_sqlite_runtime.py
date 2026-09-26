@@ -15,6 +15,7 @@ from db import sqlite as sqliteDb
 
 _EXPECTED_FRESH_SCHEMA_FINGERPRINTS = {
     30: "79c76e724a06b883f1a55b9eed6cdfabfbc6767ffe37259c829e3e1b7763fa51",
+    32: "2f066acdf1bacb3e02639c75e625eb05b42b6fb4394cc1a54f422bf75d067742",
 }
 
 
@@ -262,8 +263,11 @@ class SqliteSchemaFailureTests(unittest.IsolatedAsyncioTestCase):
         version = await sqliteDb.fetchOne("PRAGMA user_version")
 
         self.assertEqual(table, {"name": "training_result_export_state"})
-        self.assertEqual(migration, {"fromVersion": 29, "toVersion": 30})
-        self.assertEqual(version, {"user_version": 30})
+        self.assertEqual(
+            migration,
+            {"fromVersion": 29, "toVersion": sqliteSchema.SCHEMA_VERSION},
+        )
+        self.assertEqual(version, {"user_version": sqliteSchema.SCHEMA_VERSION})
 
 
 if __name__ == "__main__":

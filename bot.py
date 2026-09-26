@@ -62,6 +62,7 @@ from runtime import (
     backups as runtimeBackups,
     botProfile as runtimeBotProfile,
     bootstrap as runtimeBootstrap,
+    commandPause as runtimeCommandPause,
     configSanity as runtimeConfigSanity,
     commandPermissions as runtimeCommandPermissions,
     entrypoint as runtimeEntrypoint,
@@ -139,6 +140,7 @@ _runtimeControlAllowedWhilePaused = {
     "restart",
 }
 _runtimePausedMessage = "Jane is currently paused. Use /pause again to resume actions."
+_commandPausedDefaultMessage = "This command is paused right now. Please try again later."
 _serverNotRecognizedMessage = (
     "Server not recognized. Please reach out to @AlexYikes for assistance."
 )
@@ -155,6 +157,9 @@ _roleOrbatSyncLastRunByUser: dict[int, datetime] = {}
 _featureFlags = runtimeFeatureFlags.FeatureFlagService(configModule=config)
 _pluginRegistry = runtimePluginRegistry.PluginRegistry()
 _pauseController = runtimePauseState.PauseController()
+_commandPauseController = runtimeCommandPause.CommandPauseController(
+    defaultMessage=_commandPausedDefaultMessage,
+)
 _runtimeTaskSupervisor = runtimeTaskSupervisor.TaskSupervisor()
 _singleInstanceLock = runtimeSingleInstance.SingleInstanceLock(
     Path(__file__).resolve().parent / "logs" / "jane-runtime.lock"
@@ -733,6 +738,7 @@ async def setup_hook() -> None:
         "featureFlags": _featureFlags,
         "pluginRegistry": _pluginRegistry,
         "pauseController": _pauseController,
+        "commandPauseController": _commandPauseController,
         "retryQueue": _retryQueue,
         "auditStream": _auditStream,
         "metricsExporter": _metricsExporter,
@@ -751,6 +757,8 @@ async def setup_hook() -> None:
         ),
     }
     await _bootstrapCoordinator.setupHook()
+    loadedCommandPauses = await _commandPauseController.loadAll()
+    logging.info("Command pause rows loaded: %d", loadedCommandPauses)
     await _gamblingApiServer.start()
     await _janeIdentityWebServer.start()
     if _gitUpdateCoordinator is not None:
@@ -854,13 +862,22 @@ async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
             ephemeral=True,
         )
         return False
-    if _pauseController.isPaused() and commandName not in _runtimeControlAllowedWhilePaused:
-        await _safeInteractionSend(
-            interaction,
-            _runtimePausedMessage,
-            ephemeral=True,
-        )
-        return False
+    if commandName not in _runtimeControlAllowedWhilePaused:
+        if _pauseController.isPaused():
+            await _safeInteractionSend(
+                interaction,
+                _runtimePausedMessage,
+                ephemeral=True,
+            )
+            return False
+        pausedCommand = _commandPauseController.resolve(guildId, _interactionCommandName(interaction))
+        if pausedCommand is not None:
+            await _safeInteractionSend(
+                interaction,
+                pausedCommand.message or _commandPausedDefaultMessage,
+                ephemeral=True,
+            )
+            return False
     featureEnabled, featureKey, featureCacheHit = _featureFlags.isCommandEnabledCached(guildId, commandName)
     if not featureCacheHit:
         _featureFlags.refreshCommandFlagCacheSoon(guildId, commandName)

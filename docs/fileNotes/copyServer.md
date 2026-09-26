@@ -18,6 +18,7 @@ The smaller state helper is:
 - creates a backup snapshot of the target guild before applying changes
 - applies roles, categories, channels, and permission overwrites through the server-safety restore service
 - stores resume state if Discord rate limits, timeouts, or batch limits pause the run
+- leaves behind a tiny marker saying this really was a copyserver target
 - exposes an auto-retry button for some pause cases
 
 ## Why It Is So Large
@@ -62,7 +63,7 @@ It checks the token, permissions, guild state, active-run guard, source-guild co
 
 ## State Files
 
-`runtime/copyServerState.py` stores small JSON resume records under `runtime/data/copyserver/`.
+`runtime/copyServerState.py` stores small JSON records under `runtime/data/copyserver/`.
 
 That state is intentionally separate from the main SQLite database because it is tied to a very specific runtime recovery workflow:
 
@@ -70,6 +71,8 @@ That state is intentionally separate from the main SQLite database because it is
 - which source snapshot was used
 - which role Jane was resuming around
 - whether a target backup already exists
+
+The temporary resume record still disappears after a real success. A much smaller marker sticks around so `/snapshot-menu` remembers that this is a real copyserver test target. It does not quietly turn on every other destructive command.
 
 ## Things To Be Careful About
 
@@ -79,6 +82,7 @@ That state is intentionally separate from the main SQLite database because it is
 - Keep messages explicit. This command is destructive as fuck.
 - Be careful with thread channels. The command intentionally rejects thread usage.
 - Resume state should be cleared on real success, not on a temporary pause.
+- The little copyserver marker is supposed to survive success. Restore testing relies on it.
 
 ## Good Small Edits
 

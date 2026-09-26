@@ -31,6 +31,7 @@ pip-wheel-metadata/
 .idea/
 *.swp
 *.swo
+.obsidian/
 
 # === OS Files ===
 .DS_Store
@@ -41,6 +42,8 @@ Thumbs.db
 logs/
 localOnly/
 scripts/
+# Host-specific launcher
+run.sh
 backups/serverSnapshots/*.json
 backups/serverSnapshotsOffsite/*.json
 bot.db

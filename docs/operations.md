@@ -9,9 +9,26 @@ This is the short practical doc for running Jane without remembering every opera
 - `!janeTerminal`
   Read-only terminal-style status view
 - `/pause`
-  Pause or unpause the bot
+  Pause or unpause the bot, or pause a single command with a custom notice
 - `/restart`
   Restart Jane, checking GitHub for safe updates first unless disabled
+
+### Pausing a single command
+
+The `/pause` panel has a command picker below the global pause button.
+
+1. Pick the command from the dropdown (paginated, 25 per page).
+2. Set the scope with the **Scope** button: this server only, or every server.
+3. **Pause Command** opens a modal for the notice users see when they run it.
+   Leave it blank to use Jane's default notice.
+4. **Resume Command** lifts the pause for the current scope. Resuming in guild
+   scope while a global pause is active records an exemption instead, so that
+   one server keeps the command while everyone else stays paused.
+
+Command pauses live in the `command_pauses` table and survive restarts, so a
+pause set for a maintenance window stays in place until someone lifts it.
+Pausing a group (`/link-hub`) also pauses its subcommands (`/link-hub add`).
+`/pause` and `/restart` can never be paused, so runtime control stays reachable.
 
 ## Logs
 

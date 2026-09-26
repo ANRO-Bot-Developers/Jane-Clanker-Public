@@ -24,6 +24,10 @@ def _guildStatePath(guildId: int) -> Path:
     return _stateRoot() / f"guild_{int(guildId or 0)}.json"
 
 
+def _guildProvenancePath(guildId: int) -> Path:
+    return _stateRoot() / "provenance" / f"guild_{int(guildId or 0)}.json"
+
+
 def _readJson(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -106,6 +110,44 @@ def saveGuildState(
     _deleteLegacyGuildState(guildId)
 
 
+def saveGuildProvenance(
+    guildId: int,
+    *,
+    sourceGuildId: int,
+    sourceGuildLabel: str,
+    snapshotPath: str,
+) -> None:
+    _writeJson(
+        _guildProvenancePath(guildId),
+        {
+            "schemaVersion": 1,
+            "copiedAt": datetime.now(timezone.utc).isoformat(),
+            "sourceGuildId": int(sourceGuildId or 0),
+            "sourceGuildLabel": str(sourceGuildLabel or "").strip(),
+            "snapshotPath": str(snapshotPath or "").strip(),
+        },
+    )
+
+
+def loadGuildProvenance(guildId: int) -> dict[str, Any] | None:
+    row = _readJson(_guildProvenancePath(guildId))
+    if row:
+        return row
+
+    # Older Jane builds only kept resumable copy state. Treating that as
+    # provenance keeps an in-progress or previously interrupted test copy usable.
+    row = _readJson(_guildStatePath(guildId)) or _readLegacyGuildState(guildId)
+    if int(row.get("sourceGuildId") or 0) <= 0:
+        return None
+    return {
+        "schemaVersion": 0,
+        "copiedAt": str(row.get("updatedAt") or ""),
+        "sourceGuildId": int(row.get("sourceGuildId") or 0),
+        "sourceGuildLabel": str(row.get("sourceGuildLabel") or "").strip(),
+        "snapshotPath": str(row.get("snapshotPath") or "").strip(),
+    }
+
+
 def clearGuildState(guildId: int) -> None:
     path = _guildStatePath(guildId)
     try:
@@ -113,3 +155,10 @@ def clearGuildState(guildId: int) -> None:
     except FileNotFoundError:
         pass
     _deleteLegacyGuildState(guildId)
+
+
+def clearGuildProvenance(guildId: int) -> None:
+    try:
+        _guildProvenancePath(guildId).unlink()
+    except FileNotFoundError:
+        pass

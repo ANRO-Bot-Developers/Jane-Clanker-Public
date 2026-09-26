@@ -86,6 +86,18 @@ Snapshot controls require:
 
 Restore actions also go through the destructive action gate.
 
+`/snapshot-menu` is the whole restore path now.
+
+On the main server, Jane puts one last stop sign in front of the scary button. She DMs whoever has `serverSafetyRestoreVerifierRoleId` (the Chief Nuclear Officer) using the requester's main-server display name. They get six hours to check in with the requester, click **Continue**, and type `confirm restore`.
+
+Normally, you cannot rubber-stamp your own restore. Doop is the one exception and skips the reviewer step entirely.
+
+The preview is a little chunky, but it is not trying to write a novel. It names missing roles, categories, and channels, then gives useful counts for role settings, channel permissions/layout, category changes, and member roles. The reviewer gets that same summary in their DM. Jane also calls out extra live stuff and leaves it alone.
+
+The actual bypass list lives in `serverSafetyRestoreVerificationBypassUserIds`. Keep that list tiny. Bypassed restores still go through the normal destructive gate and still leave an audit trail.
+
+Servers that have actually been used with `!copyserver` get the same snapshot controls without the DM step. That carve-out is there so restores can be tested against a real copy without quietly turning destructive commands on everywhere.
+
 ## Restore Flow
 
 Snapshot restore is basically:
@@ -96,7 +108,9 @@ Snapshot restore is basically:
 4. Restores channels.
 5. Finalizes category and channel order.
 6. Restores member role assignments.
-7. Returns counts and failure details.
+7. Says whether it finished cleanly, paused, or only got part of the job done.
+
+Jane checks that the snapshot actually belongs to the current guild before she starts. Renaming a file is not enough to sneak a different server's snapshot through.
 
 By default, snapshot restore does not delete extra roles or channels. Cleanup is a separate dangerous mode in the lower-level restore helper and should not be casually enabled.
 
@@ -124,7 +138,7 @@ If the server is actively on fire, do this slowly and deliberately:
 4. Use preview before restore.
 5. Confirm the snapshot is for the same guild.
 6. Run restore only from an authorized recovery account.
-7. Read the returned counts for role, channel, category, and member changes.
+7. Read the returned counts for role, channel, category, and member changes. If Jane says she paused or only got partway through, believe her.
 8. Check audit logs and `logs/general-errors.log`.
 9. Create a new manual snapshot only after the server is stable again.
 
@@ -139,6 +153,9 @@ If the server is actively on fire, do this slowly and deliberately:
 - `serverSafetyManualSnapshotKeepCount`
 - `serverSafetyWeeklySnapshotGuildIds`
 - `serverSafetyAllowedUserIds`
+- `serverSafetyRestoreVerifierRoleId`
+- `serverSafetyRestoreVerificationTimeoutSec`
+- `serverSafetyRestoreVerificationBypassUserIds`
 - `serverSafetyIgnoredCategoryIds`
 - `serverSafetyPreservedChannelIds`
 

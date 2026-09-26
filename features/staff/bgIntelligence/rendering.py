@@ -512,8 +512,75 @@ def _externalMatchLine(match: dict[str, Any]) -> str:
         if match.get("lastSeen"):
             pieces.append(f"last seen {match.get('lastSeen')}")
         return " - ".join(pieces)
+    if source.lower() == "rotector":
+        pieces = [f"Rotector ({_rotectorSubjectLabel(match)})", str(match.get("flagName") or "Flagged")]
+        category = str(match.get("categoryLabel") or match.get("category") or "").strip()
+        if category:
+            pieces.append(category)
+        reasonTitles = [
+            str(reason.get("title") or "").strip()
+            for reason in list(match.get("reasons") or [])[:3]
+            if isinstance(reason, dict) and str(reason.get("title") or "").strip()
+        ]
+        if reasonTitles:
+            pieces.append(", ".join(reasonTitles))
+        linkedCount = len(list(match.get("linkedRobloxAccounts") or []))
+        if linkedCount:
+            pieces.append(f"{linkedCount} linked flagged Roblox account(s)")
+        return " - ".join(pieces)
     subjectId = match.get("subjectId") or "?"
     return f"{source} {matchType} - {subjectId}"
+
+
+_rotectorTextEvidenceLimit = 6
+_rotectorAttribution = (
+    "Source: Rotector database (via Rayward). Flags must be verified by staff before acting."
+    "Appeals go to Rotector only."
+)
+
+
+def _rotectorSubjectLabel(row: dict[str, Any]) -> str:
+    return "Discord" if str(row.get("subjectType") or "").strip().lower() == "discord" else "Roblox"
+
+
+def _rotectorMatches(report: Any) -> list[dict[str, Any]]:
+    return [
+        match
+        for match in list(getattr(report, "externalSourceMatches", None) or [])
+        if isinstance(match, dict) and str(match.get("source") or "").strip().lower() == "rotector"
+    ]
+
+
+def _rotectorFindingLines(match: dict[str, Any], *, evidenceLimit: int = 3) -> list[str]:
+    flagName = str(match.get("flagName") or "Flagged").strip()
+    header = f"Rotector ({_rotectorSubjectLabel(match)}): **{flagName}**"
+    category = str(match.get("categoryLabel") or match.get("category") or "").strip()
+    if category:
+        header += f" - category `{category}`"
+    if not match.get("actionable"):
+        header += " (not a finding on its own)"
+    rows = [header]
+    for reason in list(match.get("reasons") or []):
+        if not isinstance(reason, dict):
+            continue
+        title = str(reason.get("title") or reason.get("type") or "Reason").strip()
+        detectors = ", ".join(str(value) for value in list(reason.get("detectors") or [])[:3])
+        rows.append(f"- {title}" + (f" ({detectors})" if detectors else ""))
+        for summary in list(reason.get("summaries") or [])[:1]:
+            rows.append(f"  - {_truncate(summary, 160)}")
+        for evidence in list(reason.get("evidence") or [])[:evidenceLimit]:
+            rows.append(f"  - {_truncate(evidence, 160)}")
+    provisional = [str(value) for value in list(match.get("provisionalReasons") or []) if str(value).strip()]
+    if provisional:
+        rows.append(f"- Pending human review: {', '.join(provisional[:4])}")
+    for account in list(match.get("linkedRobloxAccounts") or [])[:5]:
+        if not isinstance(account, dict):
+            continue
+        name = account.get("robloxUsername") or "unknown"
+        rows.append(
+            f"- Linked Roblox account `{name}` (`{account.get('robloxUserId')}`): {account.get('flagName') or 'Flagged'}"
+        )
+    return rows
 
 
 def _shouldShowExternalDetail(detail: dict[str, Any]) -> bool:
@@ -564,6 +631,16 @@ def _externalSourceLines(report: Any) -> list[str]:
                 )
             elif source.lower() == "moco-co" and status == "OK":
                 sourceLine += f" - groups `{int(summary.get('groupCount') or 0)}`"
+            elif source.lower() == "rotector":
+                sourceLine = f"Rotector ({_rotectorSubjectLabel(detail)}): `{status}`"
+                if reason:
+                    sourceLine += f" ({reason.replace('_', ' ')})"
+                elif status == "OK":
+                    flagType = _safeInt(summary.get("flagType"))
+                    if flagType == 0:
+                        sourceLine += " - no flag on record yet (doesn't mean safe)"
+                    else:
+                        sourceLine += f" - {summary.get('flagName') or f'flag type {flagType}'}"
             if detail.get("error"):
                 sourceLine += f" - {_truncate(detail.get('error'), 160)}"
             rows.append(sourceLine)
@@ -666,8 +743,12 @@ def _connectionDetailLines(report: Any) -> list[str]:
                 types = ", ".join(str(value) for value in list(group.get("types") or [])[:2] if str(value).strip())
                 suffix = f" | {types}" if types else ""
                 rows.append(f"- {name}: last seen `{groupLastSeen}`{suffix}")
+        elif source == "rotector":
+            rows.extend(_rotectorFindingLines(match, evidenceLimit=2))
         else:
             rows.append(_externalMatchLine(match))
+    if _rotectorMatches(report):
+        rows.append(_rotectorAttribution)
     return rows
 
 
@@ -1344,6 +1425,34 @@ def _overviewTaseRecordLine(report: Any) -> str:
     return "TASE records were not checked."
 
 
+def _overviewRotectorRecordLine(report: Any) -> str:
+    matches = _rotectorMatches(report)
+    if matches:
+        parts = [f"{_rotectorSubjectLabel(match)}: **{match.get('flagName') or 'Flagged'}**" for match in matches]
+        return f"{'; '.join(parts)}. From the Rotector database. Verify before acting."
+    details = [
+        detail
+        for detail in list(getattr(report, "externalSourceDetails", None) or [])
+        if isinstance(detail, dict) and str(detail.get("source") or "").strip().lower() == "rotector"
+    ]
+    statuses = {str(detail.get("status") or "SKIPPED").strip().upper() for detail in details}
+    reasons = {
+        str((detail.get("summary") or {}).get("reason") or "").strip().lower()
+        for detail in details
+        if isinstance(detail.get("summary"), dict)
+    }
+    if "OK" in statuses:
+        suffix = " Some lookups failed." if "ERROR" in statuses else ""
+        return f"No Rotector flag on record yet. This does not mean the user is clean.{suffix}"
+    if "ERROR" in statuses:
+        return "Rotector records could not be checked."
+    if "missing_api_key" in reasons:
+        return "Rotector records were not checked because no Rayward API key is configured."
+    if "disabled" in reasons:
+        return "Rotector records are disabled."
+    return "Rotector records were not checked."
+
+
 def _overviewBadgeLine(report: Any) -> str:
     status = _scanStatus(getattr(report, "badgeHistoryScanStatus", "SKIPPED"))
     summary = getattr(report, "badgeTimelineSummary", None) or {}
@@ -1444,6 +1553,10 @@ def _recordDetailLines(report: Any) -> list[str]:
                 rows.append(f"- {name}: last seen `{groupLastSeen}`{suffix}")
         elif str(match.get("source") or "").strip().lower() == "tase":
             rows.append(_externalMatchLine(match))
+        elif str(match.get("source") or "").strip().lower() == "rotector":
+            rows.extend(_rotectorFindingLines(match, evidenceLimit=2))
+    if _rotectorMatches(report):
+        rows.append(_rotectorAttribution)
     if not rows:
         rows = _externalSourceLines(report)
     if not rows:
@@ -1851,6 +1964,7 @@ def buildReportEmbed(
     _field(embed, "[Gamepasses] Gamepasses", _overviewGamepassLine(report))
     _field(embed, "[Favorites] Favorites", _overviewFavoritesLine(report))
     _field(embed, "[Records] TASE Records", _overviewTaseRecordLine(report))
+    _field(embed, "[Records] Rotector Records", _overviewRotectorRecordLine(report))
     _field(embed, "[Badges] Badges", _overviewBadgeLine(report))
 
     reportText = "Full text report is attached. " if includeTextReport else ""
@@ -2045,6 +2159,12 @@ def buildSectionEmbed(
                 topGuildLines.append(f"{guildName} - score `{guildScore}`{suffix}")
         if topGuildLines:
             embed.add_field(name="TASE Top Servers", value=_listLines(topGuildLines, limit=10), inline=False)
+        rotectorLines: list[str] = []
+        for match in _rotectorMatches(report):
+            rotectorLines.extend(_rotectorFindingLines(match))
+        if rotectorLines:
+            rotectorLines.append(_rotectorAttribution)
+            embed.add_field(name="Rotector Findings", value=_truncate("\n".join(rotectorLines)), inline=False)
     else:
         embed.description = "Unknown detail section."
 
@@ -2175,6 +2295,12 @@ def buildReportText(
 
     lines.extend(["", "External Sources"])
     lines.extend(_externalSourceLines(report) or ["(none)"])
+    rotectorMatches = _rotectorMatches(report)
+    if rotectorMatches:
+        lines.extend(["", "Rotector Findings"])
+        for match in rotectorMatches:
+            lines.extend(_rotectorFindingLines(match, evidenceLimit=_rotectorTextEvidenceLimit))
+        lines.append(_rotectorAttribution)
 
     lines.extend(
         [

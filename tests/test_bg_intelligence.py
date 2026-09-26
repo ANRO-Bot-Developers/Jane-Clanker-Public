@@ -443,6 +443,7 @@ class BgIntelligenceRenderingTests(unittest.TestCase):
                 "[Gamepasses] Gamepasses",
                 "[Favorites] Favorites",
                 "[Records] TASE Records",
+                "[Records] Rotector Records",
                 "[Badges] Badges",
             ],
         )

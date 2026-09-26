@@ -146,11 +146,14 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal], int]
         signals.append(RiskSignal(f"One external safety source failed, but Jane used the source(s) that responded.{suffix}", 0, "data"))
 
     if not isinstance(matches, (list, tuple)) or not matches:
-        attemptedOkSources = [
+        # Rotector's terms forbid treating Unflagged as "safe", so it never earns reassurance.
+        attemptedOkSources = list(dict.fromkeys(
             str(row.get("source") or "").strip()
             for row in list(details or [])
-            if isinstance(row, dict) and str(row.get("status") or "").strip().upper() == "OK"
-        ]
+            if isinstance(row, dict)
+            and str(row.get("status") or "").strip().upper() == "OK"
+            and str(row.get("source") or "").strip().lower() != "rotector"
+        ))
         if attemptedOkSources:
             signals.append(
                 RiskSignal(
@@ -237,8 +240,62 @@ def _scoreExternalSources(report: Any) -> tuple[int, int, list[RiskSignal], int]
             signals.append(RiskSignal(f"Moco-co matched Roblox safety records{usernameText} ({groupText}).", points))
             if match.get("lastSeen"):
                 signals.append(RiskSignal(f"Moco-co last saw this account at `{match.get('lastSeen')}`.", 0, "data"))
+        elif source == "rotector":
+            points, floor, label = _rotectorFlagWeight(match)
+            scoreDelta += points
+            reviewFloor = max(reviewFloor, floor)
+            if label:
+                signals.append(RiskSignal(label, points, "data" if points <= 0 else "risk"))
+            reasonTitles = [
+                str(reason.get("title") or "").strip()
+                for reason in list(match.get("reasons") or [])[:4]
+                if isinstance(reason, dict) and str(reason.get("title") or "").strip()
+            ]
+            if reasonTitles:
+                signals.append(RiskSignal(f"Rotector reasons: {', '.join(reasonTitles)}.", 0, "data"))
+            linkedAccounts = [row for row in list(match.get("linkedRobloxAccounts") or []) if isinstance(row, dict)]
+            if linkedAccounts:
+                linkedPoints = 12
+                scoreDelta += linkedPoints
+                reviewFloor = max(reviewFloor, 30)
+                names = ", ".join(
+                    f"`{row.get('robloxUsername') or row.get('robloxUserId')}`" for row in linkedAccounts[:3]
+                )
+                signals.append(
+                    RiskSignal(
+                        f"Rotector links this Discord account to {len(linkedAccounts)} other flagged Roblox account(s): {names}.",
+                        linkedPoints,
+                    )
+                )
 
     return scoreDelta, confidenceDelta, signals, reviewFloor
+
+
+def _rotectorFlagWeight(match: dict[str, Any]) -> tuple[int, int, str]:
+    """Return (points, reviewFloor, label) for a Rotector flag.
+
+    Only Flagged (1) and Confirmed (2) are findings. The other states are process
+    states that Rotector says are not safe to act on, so they only nudge review.
+    """
+
+    flagType = _safeInt(match.get("flagType"))
+    subject = "Discord account" if str(match.get("subjectType") or "") == "discord" else "Roblox account"
+    category = str(match.get("categoryLabel") or match.get("category") or "").strip()
+    categoryText = f", category {category}" if category else ""
+    if flagType == 2:
+        return 55, 65, f"Rotector database: {subject} is Confirmed{categoryText}. Verify before acting."
+    if flagType == 1:
+        return 42, 55, f"Rotector database: {subject} is Flagged{categoryText}. Verify before acting."
+    if flagType == 4:
+        return 12, 28, f"Rotector database: {subject} has a Provisional Flag pending human review."
+    if flagType == 5:
+        return 10, 25, f"Rotector database: {subject} is Mixed (some inappropriate activity, not enough to act on)."
+    if flagType == 6:
+        return 8, 20, f"Rotector database: {subject} is a Past Offender (previously flagged, since cleared)."
+    if flagType == 0:
+        return 0, 0, ""
+    name = str(match.get("flagName") or f"flag type {flagType}").strip()
+    return 0, 0, f"Rotector database: {subject} status is {name}; this is not a finding."
 
 
 def scoreReport(

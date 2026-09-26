@@ -69,6 +69,11 @@ bgIntelligenceTaseTimeoutSec = 10
 bgIntelligenceMocoEnabled = True
 bgIntelligenceMocoApiBaseUrl = "https://api.moco-co.org"
 bgIntelligenceMocoTimeoutSec = 10
+# Rotector flags served through the Rayward API (replaces the old Rotector API).
+bgIntelligenceRotectorEnabled = True
+bgIntelligenceRotectorDiscordEnabled = True
+bgIntelligenceRaywardApiBaseUrl = "https://roscoe.rayward.app"
+bgIntelligenceRaywardTimeoutSec = 10
 bgIntelligenceFavoriteGameMax = 25
 bgIntelligenceOutfitMax = 25
 bgIntelligenceUsernameHistoryMax = 50
@@ -244,20 +249,20 @@ honorGuardEventHostEventTypeColumns = {
 
 # Honor Guard ranks and point rules.
 honorGuardEnlistedRanks = [
-    "Jr Guardsman",
     "Junior Guardsman",
     "Guardsman",
 ]
 honorGuardNcoRanks = [
-    "Sr Guardsman",
     "Senior Guardsman",
-    "Patrol Sergeant",
+    "Platoon Corporal",
+    "Platoon Sergeant",
 ]
 honorGuardOfficerRanks = [
     "Parade Officer",
-    "Senior Parade Officer",
-    "Honor Guard Officer",
-    "Commanding Officer",
+    "Parade Captain",
+    "Parade Marshal",
+    "Inspecting General",
+    "Commandant",
 ]
 honorGuardExcuseStatusValues = [
     "Excused",
@@ -348,6 +353,7 @@ honorGuardEnlistedRoleIds: list[int] = [
 ]
 honorGuardNcoRoleIds: list[int] = [
     1477788766583259309, # Senior Guardsman
+    1533539146856140870, # Platoon Corporal
     1478133203788107827  # Platoon Sergeant
 ]
 honorGuardOfficerRoleIds: list[int] = [
@@ -355,7 +361,6 @@ honorGuardOfficerRoleIds: list[int] = [
 	1533539376502669312, # Parade Captain
 	1477788762774835333, # Parade Marshal
 	1477788760866427192, # Inspector General
-	1533539146856140870, # Platoon Corporal
 	1477788754805788875  # HG Commandant
 ]
 
@@ -364,7 +369,6 @@ honorGuardChannelId: int = 1477718269921202226
 honorGuardActivePlatoons = ["CMP"]
 honorGuardAllowedRanks = [
     "Commandant",
-    "Deputy Commandant",
     "Oversight",
     "Inspector General",
     "Board Advisor",
@@ -380,6 +384,7 @@ honorGuardAllowedRanks = [
 honorGuardPlatoonAllowedRanks = {
     "cmp": [
         "Major",
+		"Captain",
         "Lieutenant",
         "Sergeant",
         "Corporal",

@@ -65,6 +65,29 @@ def _setAllButtonsDisabled(view: discord.ui.View, disabled: bool) -> None:
         if isinstance(child, discord.ui.Button):
             child.disabled = disabled
 
+async def _finishUnboundReview(
+    view: discord.ui.View,
+    interaction: discord.Interaction,
+    submissionType: str,
+    *,
+    status: str,
+    note: Optional[str],
+) -> None:
+    await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
+    messageId = int(getattr(interaction.message, "id", 0) or 0)
+    submission = await honorGuardService.getSubmissionByMessageId(messageId, submissionType) if messageId > 0 else None
+    if not submission:
+        log.warning("No %s submission linked to review message %s.", submissionType, messageId)
+        await _safeInteractionReply(
+            interaction,
+            "I couldn't find the submission for this review message.",
+            ephemeral=True,
+        )
+        return
+    boundView = type(view)(view.cog, int(submission["submissionId"]))
+    view.cog.bot.add_view(boundView, message_id=messageId)
+    await boundView._finishDecision(interaction, status=status, note=note)
+
 async def _disableIfLocked(self):
     session = await self._clockInEngine.getSession(self.sessionId)
     if session and session.get("status") in {"FINISHED", "CANCELED"}:
@@ -143,6 +166,9 @@ class HonorGuardPointAwardReviewView(discord.ui.View):
         status: str,
         note: Optional[str],
     ) -> None:
+        if self.submissionId <= 0:
+            await _finishUnboundReview(self, interaction, "POINT_AWARD", status=status, note=note)
+            return
         if not isinstance(interaction.user, discord.Member):
             await _safeInteractionReply(
                 interaction,
@@ -150,10 +176,20 @@ class HonorGuardPointAwardReviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        # Acknowledge immediately to avoid timeout
+        await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
         if not self._canReview(interaction.user):
             await _safeInteractionReply(
                 interaction,
                 "You are not authorized to review this point award.",
+                ephemeral=True,
+            )
+            return
+
+        if self._lock.locked():
+            await _safeInteractionReply(
+                interaction,
+                "This submission is already being processed. Please wait.",
                 ephemeral=True,
             )
             return
@@ -171,8 +207,6 @@ class HonorGuardPointAwardReviewView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
-
-            await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
 
             previousState = [child.disabled for child in self.children]
             _setAllButtonsDisabled(self, True)
@@ -333,6 +367,9 @@ class HonorGuardSoloSentryReviewView(discord.ui.View):
         status: str,
         note: Optional[str],
     ) -> None:
+        if self.submissionId <= 0:
+            await _finishUnboundReview(self, interaction, "SOLO_SENTRY", status=status, note=note)
+            return
         if not isinstance(interaction.user, discord.Member):
             await _safeInteractionReply(
                 interaction,
@@ -340,10 +377,20 @@ class HonorGuardSoloSentryReviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        # Acknowledge immediately to avoid timeout
+        await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
         if not self._canReview(interaction.user):
             await _safeInteractionReply(
                 interaction,
                 "You are not authorized to review this sentry log.",
+                ephemeral=True,
+            )
+            return
+
+        if self._lock.locked():
+            await _safeInteractionReply(
+                interaction,
+                "This submission is already being processed. Please wait.",
                 ephemeral=True,
             )
             return
@@ -361,8 +408,6 @@ class HonorGuardSoloSentryReviewView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
-
-            await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
 
             previousState = [child.disabled for child in self.children]
             _setAllButtonsDisabled(self, True)
@@ -549,6 +594,9 @@ class HonorGuardEventReviewView(discord.ui.View):
         status: str,
         note: Optional[str],
     ) -> None:
+        if self.submissionId <= 0:
+            await _finishUnboundReview(self, interaction, "EVENT_RECORD", status=status, note=note)
+            return
         if not isinstance(interaction.user, discord.Member):
             await _safeInteractionReply(
                 interaction,
@@ -556,10 +604,20 @@ class HonorGuardEventReviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        # Acknowledge immediately to avoid timeout
+        await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
         if not await self._canReview(interaction.user):
             await _safeInteractionReply(
                 interaction,
                 "You are not authorized to review this event submission.",
+                ephemeral=True,
+            )
+            return
+
+        if self._lock.locked():
+            await _safeInteractionReply(
+                interaction,
+                "This submission is already being processed. Please wait.",
                 ephemeral=True,
             )
             return
@@ -577,8 +635,6 @@ class HonorGuardEventReviewView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
-
-            await _safeInteractionDefer(interaction, ephemeral=True, thinking=True)
 
             previousState = [child.disabled for child in self.children]
             _setAllButtonsDisabled(self, True)
@@ -789,7 +845,7 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
         await self._refreshMessage(interaction)
 
     async def _refreshMessage(self, interaction: discord.Interaction) -> None:
-        self.selectedUser = next((a for a in self.attendees if str(a.get("userId")) == str(self.selectedUserId) and a.get("participantRole") != "HOST"), None)
+        self.selectedUser = next((a for a in self.attendees if str(a.get("userId")) == str(self.selectedUserId)), None)
         if not self.selectedUser:
             return
         self.quotaPointsBtn.disabled = False
@@ -822,6 +878,8 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
                 view=self,
             )
         )
+        await self.updateMessage(interaction)
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
     
     @discord.ui.button(
         label="Edit Event Points",
@@ -841,11 +899,52 @@ class HonorGuardEventSubmitView(runtimeViewBases.OwnerLockedView):
                 view=self,
             )
         )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
+
+    @discord.ui.button(
+        label="Edit All Quota Points",
+        style=discord.ButtonStyle.secondary,
+        row=2,
+        custom_id="honorguard_event_submit:quota_points_all",
+    )
+    async def quotaAllPointsBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interactionRuntime.safeInteractionSendModal(
+            interaction,
+            HonorGuardEventPointsAllModal(
+                cog=self.cog,
+                eventId=self.eventId,
+                attendees=self.attendees,
+                type="QUOTA",
+                original_interaction=interaction,
+                view=self,
+            )
+        )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
+
+    @discord.ui.button(
+        label="Edit All Event Points",
+        style=discord.ButtonStyle.secondary,
+        row=2,
+        custom_id="honorguard_event_submit:event_points_all",
+    )
+    async def eventAllPointsBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interactionRuntime.safeInteractionSendModal(
+            interaction,
+            HonorGuardEventPointsAllModal(
+                cog=self.cog,
+                eventId=self.eventId,
+                attendees=self.attendees,
+                type="EVENT",
+                original_interaction=interaction,
+                view=self,
+            ),
+        )
+        self.attendees = await self.cog._clockInEngine.listAttendees(int(self.eventId))
     
     @discord.ui.button(
         label="Submit",
         style=discord.ButtonStyle.success,
-        row=2,
+        row=3,
         custom_id="honorguard_event_submit:submit",
     )
     async def submitBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -871,6 +970,51 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
         else:
             self.pointsInput.default = str(user.get("eventPoints", 0))
         self.type = type
+    
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        self.currentAttendees = await self.cog._clockInEngine.listAttendees(self.eventId)
+        currentUser = next((user for user in self.currentAttendees if str(self.user.get("userId")) == str(user.get("userId"))), None,)
+        if not currentUser:
+            await _safeInteractionReply(interaction, "This attendee wasn't found in attandence records.")
+            return
+
+        raw = str(self.pointsInput.value or "").strip()
+        try:
+            points = float(raw)
+            if self.type == "QUOTA":
+                if points % 0.5 != 0:
+                    await _safeInteractionReply(interaction, "Quota points must be in increments of 0.5.")
+                    return
+            else:
+                if points % 1 != 0:
+                    await _safeInteractionReply(interaction, "Event points must be whole numbers.")
+                    return
+        except ValueError:
+            await _safeInteractionReply(interaction, "Points must be a number.")
+            return
+        await self.cog.handleEditPoints(interaction, self.eventId, currentUser, points, self.type)
+        await self.view.updateMessage(self.original_interaction)
+
+class HonorGuardEventPointsAllModal(discord.ui.Modal, title="Edit Points"):
+    pointsInput = discord.ui.TextInput(
+        label="New Points",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=5,
+    )
+
+    def __init__(self, cog: "HonorGuardCog", eventId: int, attendees: list[dict], type: str, original_interaction: discord.Interaction, view: discord.ui.View):
+        super().__init__()
+        self.cog = cog
+        self.eventId = int(eventId)
+        self.attendees = attendees
+        self.original_interaction = original_interaction
+        self.view = view
+        if(type == "QUOTA"):
+            self.pointsInput.default = str(0) # fix later
+        else:
+            self.pointsInput.default = str(0) # fix later
+        self.type = type
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         raw = str(self.pointsInput.value or "").strip()
@@ -887,7 +1031,7 @@ class HonorGuardEventPointsModal(discord.ui.Modal, title="Edit Points"):
         except ValueError:
             await _safeInteractionReply(interaction, "Points must be a number.")
             return
-        await self.cog.handleEditPoints(interaction, self.eventId, self.user, points, self.type)
+        await self.cog.handleEditAllPoints(interaction, self.eventId, points, self.type)
         await self.view.updateMessage(self.original_interaction)
 
 class HonorGuardEventFinishModal(discord.ui.Modal, title="Finish Event"):

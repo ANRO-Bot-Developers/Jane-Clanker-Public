@@ -5,7 +5,7 @@ import sqlite3
 
 import aiosqlite
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 
 async def _readSchemaVersion(db: aiosqlite.Connection) -> int:
@@ -1183,6 +1183,17 @@ async def applySchema(
         );
         """)
     await db.execute("""
+        CREATE TABLE IF NOT EXISTS command_pauses (
+            guildId INTEGER NOT NULL DEFAULT 0,
+            commandName TEXT NOT NULL,
+            paused INTEGER NOT NULL DEFAULT 1,
+            pauseMessage TEXT NOT NULL DEFAULT '',
+            updatedBy INTEGER NOT NULL DEFAULT 0,
+            updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (guildId, commandName)
+        );
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS audit_events (
             eventId INTEGER PRIMARY KEY AUTOINCREMENT,
             guildId INTEGER NOT NULL DEFAULT 0,
@@ -1600,6 +1611,7 @@ async def applySchema(
         "CREATE INDEX IF NOT EXISTS idx_guild_member_activity_daily_guild_date ON guild_member_activity_daily(guildId, activityDate)",
         "CREATE INDEX IF NOT EXISTS idx_guild_channel_activity_daily_guild_date ON guild_channel_activity_daily(guildId, activityDate)",
         "CREATE INDEX IF NOT EXISTS idx_feature_flags_guild_key ON guild_feature_flags(guildId, featureKey)",
+        "CREATE INDEX IF NOT EXISTS idx_command_pauses_command ON command_pauses(commandName, guildId)",
         "CREATE INDEX IF NOT EXISTS idx_audit_events_guild_created ON audit_events(guildId, createdAt)",
         "CREATE INDEX IF NOT EXISTS idx_audit_events_source_created ON audit_events(source, createdAt)",
         "CREATE INDEX IF NOT EXISTS idx_assistant_notes_subject ON assistant_notes(guildId, subjectType, subjectKey, updatedAt)",

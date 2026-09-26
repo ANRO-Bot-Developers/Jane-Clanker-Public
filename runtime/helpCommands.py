@@ -248,7 +248,9 @@ def slashPermissionHint(path: str) -> str:
         "/federation-list": "Administrator/manage-server only. Test server only.",
         "/post-role-menu": "Administrator/manage-server only.",
         "/ops": "Configured ops allowlist only.",
-        "/snapshot-menu": "Administrator/manage-server plus configured snapshot allowlist.",
+        "/snapshot-menu": (
+            "Administrator/manage-server plus configured snapshot allowlist; main-server restore needs verifier approval."
+        ),
         "/quarantine": "Administrator/manage-server plus configured recovery allowlist.",
         "/pause": "Configured runtime-control allowlist only.",
         "/restart": "Configured runtime-control allowlist only.",

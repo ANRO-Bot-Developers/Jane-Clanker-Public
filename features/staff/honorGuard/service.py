@@ -528,6 +528,13 @@ async def getSubmission(submissionId: int) -> Optional[dict[str, Any]]:
     )
 
 
+async def getSubmissionByMessageId(messageId: int, submissionType: str) -> Optional[dict[str, Any]]:
+    return await fetchOne(
+        "SELECT * FROM hg_submissions WHERE messageId = ? AND submissionType = ? ORDER BY submissionId DESC LIMIT 1",
+        (int(messageId), str(submissionType or "").strip().upper()),
+    )
+
+
 async def setSubmissionStatus(
     *,
     submissionId: int,

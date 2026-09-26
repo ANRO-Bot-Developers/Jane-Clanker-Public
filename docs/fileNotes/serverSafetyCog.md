@@ -65,7 +65,15 @@ Snapshot menu actions delegate to the server-safety service:
 - `createGuildSnapshot(...)`
 - `applyGuildSnapshot(...)`
 
-Restore is destructive and should stay behind the destructive gate.
+Restore is destructive, so it stays behind the destructive gate. The copyserver carve-out is intentionally tiny and only applies to snapshot restore.
+
+Main-server restores get one more stop sign. Jane DMs the configured reviewer using the requester's main-server display name, then sits on her hands until that person clicks **Continue** and types `confirm restore`. Pending approvals only live in memory, so they expire normally and a restart safely kills them.
+
+The bypass list skips that DM dance, but it does not skip the destructive gate or audit trail. Please keep that list boring and tiny.
+
+The menu and reviewer DM share the preview formatter in `features/operations/serverSafety/preview.py`. Keep it small enough for Discord, but useful enough to answer the real question: what is Jane about to mess with?
+
+The result formatter lives in `features/operations/serverSafety/restoreReport.py`. Paused and partial restores need to stay honest here. A Discord timeout should never come back saying that the restore was complete.
 
 ## Things To Be Careful About
 

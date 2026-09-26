@@ -50,7 +50,7 @@ Jane currently looks at:
 - configured badge flags
 - full public badge award timeline quality, up to the configured hard page cap
 - public badge timeline graph, when awarded dates are available
-- optional external safety-source records from TASE and Moco-co
+- optional external safety-source records from TASE, Moco-co, and Rotector (via the Rayward API)
 - configured Roblox flagged-group records and optional external safety records
 - prior Jane BG queue and BG intelligence records for internal scoring/audit context
 - longer-lived minimal Jane BG intelligence index records after the full report expires
@@ -106,7 +106,16 @@ If Jane cannot resolve a Roblox account but does find Discord-side external safe
 
 The embed also shows `Data Completeness`, which is the quick "what did Jane actually see?" section. This is separate from confidence so reviewers do not have to reverse-engineer missing API calls from the signal list.
 
-External sources are treated as extra evidence, not gospel in a funny hat. TASE checks Discord-side safety records when Jane has a Discord user ID. Moco-co checks Roblox-side safety records when Jane has a Roblox user ID. If either API key is missing, Jane marks that source as skipped and continues the rest of the report.
+External sources are treated as extra evidence, not gospel in a funny hat. TASE checks Discord-side safety records when Jane has a Discord user ID. Moco-co checks Roblox-side safety records when Jane has a Roblox user ID. Rotector, served through the Rayward API, checks both the Roblox user and the Discord user. If any API key is missing, Jane marks that source as skipped and continues the rest of the report.
+
+Rotector has terms of use that shape how Jane handles it:
+
+- Only `Flagged` and `Confirmed` add real score. `Provisional Flag`, `Mixed`, and `Past Offender` add a small nudge. `Queued` and `Redacted` are process states and add nothing.
+- `Unflagged` means Rotector has not detected anything **yet**. It is never shown as safe and never earns a reassuring deduction.
+- Rotector output is always labelled as coming from the Rotector database, with a reminder that staff must verify it and that appeals go to Rotector.
+- Discord server evidence uses Rotector's `safeName`. The live server name is never shown.
+- A `503` or any other failed lookup means the status is unknown. It is reported as an error, not as unflagged.
+- Rotector data must not be stored for more than 24 hours. `bgIntelligenceReportRetentionHours` already prunes full reports at 24 hours; keep it at or below that.
 
 Jane also does a little bit of "normalcy" scoring now:
 
@@ -141,7 +150,7 @@ Jane's matching behavior:
 - Accounts under a week old usually land around `Manual Review`.
 - Exact flagged accounts start at `82/100`, matching the public "critical hard flag" shape.
 - Watchlist and banned-user hits stay above that because those are stronger than fuzzy score math.
-- TASE and Moco-co matches can materially raise a scan when the records are severe, but they do not auto-reject anyone by themselves.
+- TASE, Moco-co, and Rotector matches can materially raise a scan when the records are severe, but they do not auto-reject anyone by themselves.
 - Alt/identity evidence is labeled `weak`, `moderate`, `strong`, `confirmed`, or `cleared`. Weak/moderate signals should prompt comparison, strong signals should usually be reviewed carefully, and confirmed/cleared labels come from staff registry decisions.
 
 The public overview is intentionally thin now: score, confidence, account identity, aggregate scan summaries, TASE-record status, and badge context. Expanded sections stay public-safe and scoped to one section at a time, but they keep the detailed source coverage, direct rule hits, labeled alt/identity evidence, prior Jane context, inventory and gamepass value totals, self-created value exclusions, outfit count, and badge timeline details. Jane can also attach a full text report when staff request it with the command option.
@@ -250,6 +259,11 @@ The main toggles live in `config.py`:
 - `bgIntelligenceMocoApiBaseUrl`
 - `bgIntelligenceMocoApiKey`
 - `bgIntelligenceMocoTimeoutSec`
+- `bgIntelligenceRotectorEnabled`
+- `bgIntelligenceRotectorDiscordEnabled`
+- `bgIntelligenceRaywardApiBaseUrl`
+- `bgIntelligenceRaywardApiKey`
+- `bgIntelligenceRaywardTimeoutSec`
 - `bgIntelligenceFavoriteGameMax`
 - `bgIntelligenceOutfitMax`
 - `bgIntelligenceUsernameHistoryMax`
@@ -298,6 +312,7 @@ Secrets should stay in `.env`:
 
 - `TASE_API_TOKEN`
 - `MOCO_API_KEY`
+- `RAYWARD_API_KEY`
 
 If those are blank, Jane does not call that service. She will still run the normal Roblox checks.
 

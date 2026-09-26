@@ -29,6 +29,7 @@ robloxInventoryApiKey = _envText("ROBLOX_INVENTORY_API_KEY", robloxOpenCloudApiK
 # Feature-specific external service credentials.
 bgIntelligenceTaseApiToken = _envText("TASE_API_TOKEN")
 bgIntelligenceMocoApiKey = _envText("MOCO_API_KEY")
+bgIntelligenceRaywardApiKey = _envText("RAYWARD_API_KEY")
 gamblingApiToken = _envText("JANE_GAMBLING_API_TOKEN")
 freedcampApiKey = _envText("FREEDCAMP_API_KEY")
 freedcampSecret = _envText("FREEDCAMP_SECRET")
