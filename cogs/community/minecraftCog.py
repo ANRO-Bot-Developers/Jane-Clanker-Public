@@ -292,14 +292,6 @@ class MinecraftCog(commands.Cog):
         await self._replaceStoredStatus()
         return message
 
-    def _resetLocalState(self) -> None:
-        self.statusMessageId = 0
-        self.statusChannelId = 0
-        self.lastStatus = MinecraftStatus(
-            online=False,
-            maxPlayers=max(1, int(minecraftServerMaxPlayersFallback or 60)),
-        )
-
     @app_commands.command(
         name="register-status-channel",
         description="Register a channel for the Minecraft server status panel.",
@@ -333,33 +325,6 @@ class MinecraftCog(commands.Cog):
         )
 
     @app_commands.command(
-        name="unregister-status-channel",
-        description="Remove the registered Minecraft server status panel.",
-    )
-    @app_commands.guild_only()
-    async def unregisterStatusChannel(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel | None = None,
-    ) -> None:
-        del channel  # Retained for slash-command compatibility with the old command shape.
-        if not canRunCommand(interaction.user):
-            await self._safeEphemeral(interaction, "You cannot unregister the Minecraft status channel.")
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        message = await self._resolveStoredMessage()
-        await self._stopPolling()
-        await self._clearStoredStatus()
-        self._resetLocalState()
-        if message is not None:
-            try:
-                await message.delete()
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                log.warning("Minecraft status message could not be deleted.", exc_info=True)
-        await interaction.followup.send("Minecraft status panel unregistered.", ephemeral=True)
-
-    @app_commands.command(
         name="restart-minecraft-status",
         description="Restart the Minecraft server status worker.",
     )
@@ -375,21 +340,6 @@ class MinecraftCog(commands.Cog):
         await self._stopPolling()
         self._startPolling()
         await interaction.followup.send("Minecraft status worker restarted.", ephemeral=True)
-
-    @app_commands.command(
-        name="delete-minecraft-database-status",
-        description="Clear stale Minecraft status registration state.",
-    )
-    @app_commands.guild_only()
-    async def deleteMinecraftDatabaseStatus(self, interaction: discord.Interaction) -> None:
-        if not canRunCommand(interaction.user):
-            await self._safeEphemeral(interaction, "You cannot clear Minecraft status state.")
-            return
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        await self._stopPolling()
-        await self._clearStoredStatus()
-        self._resetLocalState()
-        await interaction.followup.send("Minecraft status registration state cleared.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

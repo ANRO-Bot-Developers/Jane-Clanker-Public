@@ -99,7 +99,6 @@ Important values commonly needed:
 - `ROVER_API_KEY`
 - `ORBAT_GOOGLE_CREDENTIALS_PATH`
 - `JANE_ENABLE_PRIVATE_EXTENSIONS`
-- `JANE_DISABLE_GIT_PULL_ON_RESTART`
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
 
 Never commit `.env`.
@@ -119,7 +118,6 @@ Before running against a dev server, check:
 - `allowedCommandGuildIds`
 - channel IDs for the feature being tested
 - role IDs for the feature being tested
-- destructive command flags
 
 ## Google Credentials
 
@@ -174,7 +172,7 @@ If a dev machine needs production-like state, use an intentional backup/restore 
   Check API keys, credential path, and whether the local file exists.
 
 - Git update behavior is unexpected.
-  Check `JANE_DISABLE_GIT_PULL_ON_RESTART`, `JANE_ENABLE_AUTO_GIT_UPDATE`, and [Auto Git Update](autoGitUpdate.md).
+  Check `JANE_ENABLE_AUTO_GIT_UPDATE` and [Auto Git Update](autoGitUpdate.md).
 
 ## Safe Dev Habits
 

@@ -4,7 +4,6 @@ import csv
 import io
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import discord
@@ -139,62 +138,6 @@ class FeatureFlagModal(discord.ui.Modal):
         await interactionRuntime.safeInteractionReply(
             interaction,
             content=f"Feature `{featureKey}` set to `{enabled}` for guild `{self.guildId}`.",
-            ephemeral=True,
-        )
-
-
-class RestoreBackupModal(discord.ui.Modal):
-    fileNameInput = discord.ui.TextInput(
-        label="Backup filename",
-        placeholder="bot_YYYYMMDD_HHMMSS_label.db",
-        required=True,
-        max_length=200,
-    )
-
-    def __init__(self, *, viewRef: "OpsControlView"):
-        self.viewRef = viewRef
-        super().__init__(title="Restore Backup", timeout=300)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not self.viewRef.cog.isAllowedUser(int(getattr(interaction.user, "id", 0) or 0)):
-            await interactionRuntime.safeInteractionReply(
-                interaction,
-                content="You are not allowed to use this panel.",
-                ephemeral=True,
-            )
-            return
-        fileName = str(self.fileNameInput.value or "").strip()
-        if not fileName:
-            await interactionRuntime.safeInteractionReply(
-                interaction,
-                content="Backup filename is required.",
-                ephemeral=True,
-            )
-            return
-        try:
-            restoredPath = await backupRuntime.restoreBackup(self.viewRef.cog.config, backupFileName=fileName)
-        except Exception as exc:
-            await interactionRuntime.safeInteractionReply(
-                interaction,
-                content=f"Restore failed: {exc.__class__.__name__}: {exc}",
-                ephemeral=True,
-            )
-            return
-        await self.viewRef.cog.auditStream.logEvent(
-            source="ops",
-            action="database restored from backup",
-            guildId=self.viewRef.guildId,
-            actorId=int(getattr(interaction.user, "id", 0) or 0),
-            targetType="backup",
-            targetId=fileName,
-            severity="WARN",
-            details={"restoredPath": str(restoredPath)},
-            authorizedBy=f"user:{int(getattr(interaction.user, 'id', 0) or 0)}",
-            postToDiscord=True,
-        )
-        await interactionRuntime.safeInteractionReply(
-            interaction,
-            content=f"Restore complete: `{Path(restoredPath).name}`",
             ephemeral=True,
         )
 
@@ -500,10 +443,6 @@ class OpsControlView(runtimeViewBases.OwnerLockedView):
             content=f"Backup created: `{backupPath.name}`",
             ephemeral=True,
         )
-
-    @discord.ui.button(label="Restore Backup", style=discord.ButtonStyle.danger, row=1)
-    async def restoreBackupBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interactionRuntime.safeInteractionSendModal(interaction, RestoreBackupModal(viewRef=self))
 
     @discord.ui.button(label="Backups", style=discord.ButtonStyle.secondary, row=1)
     async def listBackupsBtn(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:

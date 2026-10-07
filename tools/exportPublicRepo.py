@@ -91,7 +91,6 @@ _PRIVATE_ONLY_PATH_PREFIXES = {
     "runtime/configMerge.py",
     "runtime/gitUpdate.py",
     "runtime/processControl.py",
-    "runtime/restartStatus.py",
     "tests/test_link_hub_service.py",
 }
 _SCAN_PATTERNS = (
@@ -110,14 +109,8 @@ _SCAN_PATTERNS = (
 )
 _GENERIC_CONFIG_REPLACEMENTS = {
     "enablePrivateExtensions": "False",
-    "enableDestructiveCommands": "False",
-    "destructiveCommandsDryRun": "True",
-    "disableGitPullOnManualRestart": "True",
-    "allowGitPullOnManualRestart": "False",
     "autoGitUpdateEnabled": "False",
     "serverIdTesting": "0",
-    "serverSafetyQuarantineThreshold": "5",
-    "serverSafetyQuarantineWindowSec": "30",
 }
 _CONFIG_SANITIZE_PATHS = (
     "config.py",
@@ -410,9 +403,6 @@ os.environ["ROVER_API_KEY"] = "public-export-smoke-key"
 os.environ["ORBAT_GOOGLE_CREDENTIALS_PATH"] = "public-export-service-account.json"
 os.environ["JANE_GAMBLING_API_TOKEN"] = "public-export-smoke-token"
 os.environ["JANE_ENABLE_PRIVATE_EXTENSIONS"] = "0"
-os.environ["ENABLE_DESTRUCTIVE_COMMANDS"] = "0"
-os.environ["DESTRUCTIVE_COMMANDS_DRY_RUN"] = "1"
-os.environ["JANE_DISABLE_GIT_PULL_ON_RESTART"] = "1"
 os.environ["JANE_ENABLE_AUTO_GIT_UPDATE"] = "0"
 
 moduleNames = [
@@ -456,9 +446,6 @@ print("Import smoke test passed.")
     env["ORBAT_GOOGLE_CREDENTIALS_PATH"] = "public-export-service-account.json"
     env["JANE_GAMBLING_API_TOKEN"] = "public-export-smoke-token"
     env["JANE_ENABLE_PRIVATE_EXTENSIONS"] = "0"
-    env["ENABLE_DESTRUCTIVE_COMMANDS"] = "0"
-    env["DESTRUCTIVE_COMMANDS_DRY_RUN"] = "1"
-    env["JANE_DISABLE_GIT_PULL_ON_RESTART"] = "1"
     env["JANE_ENABLE_AUTO_GIT_UPDATE"] = "0"
     importResult = subprocess.run(
         [sys.executable, "-c", importScript, str(targetRoot)],

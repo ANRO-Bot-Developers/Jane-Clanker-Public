@@ -13,6 +13,17 @@ def statusIcon(status: str) -> str:
     return ":o: Pending"
 
 
+recruitLookupFound = "FOUND"
+recruitLookupNotFound = "NOT_FOUND"
+recruitLookupUnavailable = "UNAVAILABLE"
+
+_recruitLookupText = {
+    recruitLookupFound: ":white_check_mark: Jane found this user in the ANRO server.",
+    recruitLookupNotFound: ":x: Jane couldn't find this user in the ANRO server.",
+    recruitLookupUnavailable: ":warning: Jane isn't in the ANRO server (verify manually).",
+}
+
+
 def buildRecruitmentEmbed(submission: Dict) -> discord.Embed:
     embed = discord.Embed(
         title="Recruitment Log",
@@ -24,6 +35,9 @@ def buildRecruitmentEmbed(submission: Dict) -> discord.Embed:
         recruitText = f"{recruitText} ({recruitDisplayName})"
     embed.add_field(name="Recruiter", value=f"<@{submission['submitterId']}>", inline=False)
     embed.add_field(name="Recruited User", value=recruitText, inline=False)
+    lookupText = _recruitLookupText.get(str(submission.get("recruitLookupStatus") or "").strip().upper())
+    if lookupText:
+        embed.add_field(name="Server Check", value=lookupText, inline=False)
     passed = "Yes" if submission["passedOrientation"] else "Pending"
     embed.add_field(name="Passed Orientation", value=passed, inline=True)
     embed.add_field(name="Potential Points", value=str(submission["points"]), inline=True)

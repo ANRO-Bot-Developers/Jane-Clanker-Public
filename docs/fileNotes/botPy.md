@@ -9,7 +9,7 @@ If you want the "where does Jane even start?" answer, this is the file.
 - builds the Discord bot client
 - wires shared runtime services together
 - loads extensions/cogs
-- routes message events
+- routes message events to `HumanMessageRouter`
 - starts Jane from `.env`
 - handles a few startup safety checks
 
@@ -28,21 +28,18 @@ If Jane hard-fails on startup, this is one of the first places to look.
 
 ### `on_message`
 
-This is the main text-command routing path.
+This is the human-message entry point.
 
-It does a few important things in order:
-- handles paused-runtime behavior
-- checks guild allowlisting
-- routes hidden/manual commands like `!janeterminal`, `!shutdown`, and `?janeRuntime`
-- falls back to normal command processing
+It ignores bot authors and hands human messages to `HumanMessageRouter`
+(see [`runtime/messageRouting.py`](../../runtime/messageRouting.py)).
 
-If a text command "just does nothing," this is usually the first file to check.
+Jane runs with the default intents plus Server Members, so message text only
+arrives in DMs and in messages that mention her. If a text trigger "just does
+nothing," check whether the message actually mentions Jane.
 
-### Tiny Wrapper Helpers For Manual Commands
+### Router Providers
 
-These are just thin routing functions that hand off to the text-command router in [`runtime/textCommands.py`](../../runtime/textCommands.py).
-
-They are not interesting by themselves, but they make the main message flow a little less unreadable.
+`bot.py` builds the text and human-message routers lazily through `_getTextCommandRouter` and `_getHumanMessageRouter`.
 
 ## Things To Be Careful About
 

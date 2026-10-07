@@ -495,6 +495,7 @@ async def applySchema(
             submitterId INTEGER NOT NULL,
             recruitUserId INTEGER NOT NULL,
             recruitDisplayName TEXT NOT NULL DEFAULT '',
+            recruitLookupStatus TEXT NOT NULL DEFAULT '',
             passedOrientation INTEGER NOT NULL DEFAULT 0,
             imageUrls TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -507,6 +508,7 @@ async def applySchema(
         );
         """)
     await _executeOptional("ALTER TABLE recruitment_submissions ADD COLUMN recruitDisplayName TEXT NOT NULL DEFAULT ''")
+    await _executeOptional("ALTER TABLE recruitment_submissions ADD COLUMN recruitLookupStatus TEXT NOT NULL DEFAULT ''")
     await db.execute("""
         CREATE TABLE IF NOT EXISTS recruitment_time_submissions (
             submissionId INTEGER PRIMARY KEY AUTOINCREMENT,

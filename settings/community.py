@@ -278,7 +278,6 @@ skinCooldownBypassRoleIds = []
 # bigger singleton mess than it already is.
 defaultOrganizationKey = "ANRO"
 organizationCommandFeatureMap = {
-    "orientation": "anro-sessions",
     "bg-add": "anro-bgc",
     "bgcheck": "anro-bgc",
     "bg-intel": "anro-bgc",

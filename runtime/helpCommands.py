@@ -105,7 +105,6 @@ def slashPermissionHint(path: str) -> str:
     if centralHint:
         return centralHint
 
-    instructorRoleId = runtimePermissions.toPositiveInt(getattr(config, "instructorRoleId", 0))
     recruiterRoleId = runtimePermissions.toPositiveInt(getattr(config, "recruiterRoleId", 0))
     bgModRoleId = runtimePermissions.toPositiveInt(getattr(config, "moderatorRoleId", 0))
     mrRoleId = runtimePermissions.toPositiveInt(getattr(config, "middleRankRoleId", 0))
@@ -132,9 +131,6 @@ def slashPermissionHint(path: str) -> str:
         applicationPanelRoles.append(hrRoleId)
 
     hints: dict[str, str] = {
-        "/orientation": (
-            f"Instructor role required ({runtimePermissions.formatRoleIds([instructorRoleId] if instructorRoleId > 0 else [])})."
-        ),
         "/cohost": f"Cohost roles required ({runtimePermissions.formatRoleIds(cohostRoles)}).",
         "/recruitment": (
             f"Recruiter role required ({runtimePermissions.formatRoleIds([recruiterRoleId] if recruiterRoleId > 0 else [])})."
@@ -248,16 +244,16 @@ def slashPermissionHint(path: str) -> str:
         "/federation-list": "Administrator/manage-server only. Test server only.",
         "/post-role-menu": "Administrator/manage-server only.",
         "/ops": "Configured ops allowlist only.",
-        "/snapshot-menu": (
-            "Administrator/manage-server plus configured snapshot allowlist; main-server restore needs verifier approval."
-        ),
-        "/quarantine": "Administrator/manage-server plus configured recovery allowlist.",
+        "/snapshot-menu": "Administrator/manage-server plus configured snapshot allowlist.",
         "/pause": "Configured runtime-control allowlist only.",
-        "/restart": "Configured runtime-control allowlist only.",
         "/best-of": (
             f"Administrator or Best Of command roles ({runtimePermissions.formatRoleIds(bestOfCommandRoles)})."
         ),
-        "/archive": "Administrator only.",
+        "/kill": (
+            "MR/HR roles required "
+            f"({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])})."
+        ),
+        "/skin": f"Cohost roles required ({runtimePermissions.formatRoleIds(cohostRoles)}).",
         "/curfew": "Administrator only.",
         "/jail": "Administrator only.",
         "/unjail": "Administrator only.",
@@ -272,89 +268,19 @@ def slashPermissionHint(path: str) -> str:
 
 def hiddenCommandHelpEntries() -> list[tuple[str, str, str]]:
     cohostRoles = runtimePermissions.normalizeRoleIds(getattr(config, "cohostAllowedRoleIds", []))
-    bgRoles = sorted(runtimePermissions.getBgCheckCertifiedRoleIds())
-    appControlRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsControlRoleIds", []))
-    appAdminRoles = runtimePermissions.normalizeRoleIds(getattr(config, "divisionApplicationsAdminRoleIds", []))
     mrRoleId = runtimePermissions.toPositiveInt(getattr(config, "middleRankRoleId", 0))
     hrRoleId = runtimePermissions.toPositiveInt(getattr(config, "highRankRoleId", 0))
 
     return [
         (
-            ":)help",
-            "Show all available Jane commands and required permissions.",
-            "Open to everyone.",
-        ),
-        (
-            "?janeRuntime",
-            "Show runtime diagnostics (ping, uptime, task states, process resources).",
-            (
-                "Guild owner, manage-server, administrator, or cohost roles "
-                f"({runtimePermissions.formatRoleIds(cohostRoles)})."
-            ),
-        ),
-        (
-            "!janeTerminal",
-            "Show a read-only terminal-style runtime snapshot.",
-            "Configured terminal user only.",
-        ),
-        (
-            "?bgleaderboard / ?bg-leaderboard",
-            "Show BG reviewer approval/rejection leaderboard.",
-            f"BG-certified roles required ({runtimePermissions.formatRoleIds(bgRoles)}).",
-        ),
-        (
-            "?trainingstats / ?hoststats [@user|userId]",
-            "Show tracked training/orientation host stats.",
-            "Open to everyone in recognized servers.",
-        ),
-        (
-            "!skin <user>",
-            "Apply the skin nickname joke command.",
+            "@Jane skin <user>",
+            "Post the skin joke message (also available as /skin).",
             f"Cohost roles required ({runtimePermissions.formatRoleIds(cohostRoles)}).",
         ),
         (
-            "!kill <user>",
-            "Schedule a fake reactor-themed execution message.",
+            "@Jane kill <user>",
+            "Schedule a fake reactor-themed execution message (also available as /kill).",
             f"MR/HR roles required ({runtimePermissions.formatRoleIds([roleId for roleId in [mrRoleId, hrRoleId] if roleId > 0])}).",
-        ),
-        (
-            "!casinotoggle [on|off]",
-            "Toggle gambling category-lock enforcement at runtime.",
-            "Administrator only.",
-        ),
-        (
-            "!applications <divisionKey> <open|close|status>",
-            "Open/close application state for a division and refresh hub cards.",
-            (
-                "Application control roles "
-                f"({runtimePermissions.formatRoleIds(appControlRoles + [roleId for roleId in appAdminRoles if roleId not in appControlRoles])}) "
-                "or administrator/manage-server."
-            ),
-        ),
-        (
-            "!copyserver",
-            "Copy the configured source server snapshot into the current server.",
-            "Lead-dev copyserver allowlist only.",
-        ),
-        (
-            "!allowserver",
-            "Add the current server to Jane's allowed command guild list.",
-            "Configured ops allowlist only.",
-        ),
-        (
-            "!mirrortraininghistory",
-            "Run the training history mirror backfill once.",
-            "Configured ops allowlist only.",
-        ),
-        (
-            "!shutdown",
-            "Close Jane's bot process cleanly.",
-            "Configured ops allowlist only.",
-        ),
-        (
-            "?perm-sim / ?permsim /command [@user]",
-            "Hidden permission simulator (test-server scoped).",
-            "Administrator/manage-server in configured test guild only.",
         ),
     ]
 
@@ -382,7 +308,7 @@ _HELP_SECTION_DEFS: list[tuple[str, str, str]] = [
     ("bg", "Background Checks", "Background-check flags, queue tools, and reviewer utilities."),
     ("applications", "Applications", "Division application posting, review operations, and hub controls."),
     ("awards", "Awards & Payments", "Ribbon workflows and ANRD payment processing."),
-    ("moderation", "Moderation & Safety", "Archive, quarantine, curfew, jail, and recovery tooling."),
+    ("moderation", "Moderation & Safety", "Archive, curfew, jail, and recovery tooling."),
     ("misc", "Misc & Experimental", "Project, voice chat, ops, and uncategorized slash commands."),
     ("hidden", "Hidden / Text", "Prefix and hidden Jane commands."),
 ]
@@ -410,7 +336,7 @@ def _categorizeSlashPath(path: str) -> str:
         "/post-role-menu",
     )):
         return "general"
-    if normalized.startswith(("/orientation", "/cohost", "/schedule-event", "/events", "/best-of")):
+    if normalized.startswith(("/cohost", "/schedule-event", "/events", "/best-of")):
         return "sessions"
     if normalized.startswith(("/recruitment", "/recruitment-time-log", "/recruitment-patrol", "/orbat-request", "/loa-request", "/division-clockin")):
         return "recruitment"
@@ -422,10 +348,7 @@ def _categorizeSlashPath(path: str) -> str:
         return "awards"
     if normalized.startswith((
         "/snapshot-menu",
-        "/quarantine",
         "/pause",
-        "/restart",
-        "/archive",
         "/curfew",
         "/jail",
         "/unjail",

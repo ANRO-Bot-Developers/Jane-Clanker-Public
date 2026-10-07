@@ -27,23 +27,15 @@ freedcampTaskGroupId = 0
 
 
 # == Server Safety / Recovery ==
-serverSafetyAlertChannelId = 0
-serverSafetyAlertRoleId = 0
 serverSafetySnapshotDir = ""
 serverSafetyOffsiteSnapshotDir = ""
 serverSafetyOffsiteSnapshotsEnabled = True
 serverSafetyWeeklySnapshotKeepCount = 2
 serverSafetyManualSnapshotKeepCount = 1
 serverSafetyWeeklySnapshotGuildIds = []
-serverSafetyQuarantineEnabled = False
 serverSafetyIgnoredCategoryIds = []
 serverSafetyPreservedChannelIds = []
-serverSafetyQuarantineThreshold = 5
-serverSafetyQuarantineWindowSec = 30
 serverSafetyAllowedUserIds = []
-serverSafetyRestoreVerifierRoleId = 0
-serverSafetyRestoreVerificationTimeoutSec = 21600
-serverSafetyRestoreVerificationBypassUserIds = []
 
 
 # == Project Workflow ==

@@ -10,6 +10,7 @@ from features.staff.applications import rendering as applicationsRendering
 from features.staff.applications import service as applicationsService
 from features.staff.applications import workflowBridge as applicationsWorkflowBridge
 from features.staff.applications.questionEditor import _normalizeQuestionStyle
+from runtime import evidenceUpload
 from runtime import interaction as interactionRuntime
 
 
@@ -414,9 +415,17 @@ async def handleModalSubmit(
     proofMessageUrl: Optional[str] = None
     proofAttachments: list[str] = []
     if division.get("requiresProof"):
-        proofPrompt = str(division.get("proofPrompt") or "").strip() or "Upload proof attachments in your next message in this channel within 3 minutes."
-        await interaction.response.send_message(proofPrompt, ephemeral=True)
-        proofMessage = await cog.collectProofMessage(interaction.channel, interaction.user.id)
+        proofPrompt = str(division.get("proofPrompt") or "").strip() or "Upload your proof attachments within 3 minutes. They will be shared with the reviewing staff."
+        proofMessage = await evidenceUpload.collectEvidenceUpload(
+            interaction,
+            prompt=proofPrompt,
+            evidenceChannel=reviewChannel,
+            minFiles=1,
+            maxFiles=10,
+            imagesOnly=False,
+            modalTitle="Application proof",
+            fileLabel="Proof files",
+        )
         if proofMessage is None:
             return await interaction.followup.send("Timed out waiting for proof attachments.", ephemeral=True)
         proofMessageUrl = proofMessage.jump_url

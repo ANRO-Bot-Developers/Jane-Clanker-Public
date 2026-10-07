@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -54,18 +53,6 @@ log = logging.getLogger(__name__)
 
 
 class ApplicationsFlowMixin:
-    async def collectProofMessage(self, channel: discord.abc.GuildChannel, userId: int, timeoutSec: int = 180) -> Optional[discord.Message]:
-        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-            return None
-
-        def check(message: discord.Message) -> bool:
-            return message.author.id == userId and message.channel.id == channel.id and len(message.attachments) > 0
-
-        try:
-            return await self.bot.wait_for("message", check=check, timeout=max(10, timeoutSec))
-        except asyncio.TimeoutError:
-            return None
-
     async def handleApplicantAnswerButton(
         self,
         interaction: discord.Interaction,

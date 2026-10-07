@@ -107,9 +107,6 @@ The usual production values include:
 - `ORBAT_GOOGLE_CREDENTIALS_PATH`
 - `MINECRAFT_RCON_TOKEN` when Minecraft status is enabled
 - `JANE_ENABLE_PRIVATE_EXTENSIONS`
-- `ENABLE_DESTRUCTIVE_COMMANDS`
-- `DESTRUCTIVE_COMMANDS_DRY_RUN`
-- `JANE_DISABLE_GIT_PULL_ON_RESTART`
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
 - `JANE_INSTALL_REQUIREMENTS_ON_UPDATE`
 
@@ -142,7 +139,3 @@ Useful places to look:
 
 - `logs/general-errors.log`
 - `journalctl -u jane -f`
-- `?janeRuntime`
-- `!janeTerminal`
-
-`!janeTerminal` is read-only. It is quick remote visibility, not a remote shell wearing a fake moustache.

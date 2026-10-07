@@ -11,11 +11,9 @@ import discord
 
 from runtime import backups as runtimeBackups
 from runtime import orgProfiles
-from runtime.optionalImports import importOptionalModule
 
 log = logging.getLogger(__name__)
 
-runtimeRestartStatus = importOptionalModule("runtime.restartStatus")
 
 
 class BootstrapCoordinator:
@@ -311,14 +309,6 @@ class BootstrapCoordinator:
     async def onReady(self) -> None:
         log.info("Discord ready. Logged in as %s", self.botClient.user)
         await self.syncCommandsOnReady()
-        if runtimeRestartStatus is not None:
-            try:
-                await runtimeRestartStatus.finalizePendingRestart(
-                    botClient=self.botClient,
-                    taskBudgeter=self.taskBudgeter,
-                )
-            except Exception:
-                log.exception("Failed to finalize pending restart status message.")
         if self.startupGreetingSent:
             return
 

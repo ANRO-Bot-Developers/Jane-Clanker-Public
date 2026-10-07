@@ -115,7 +115,7 @@ Expected behavior:
 
 - one log per user per day
 - 30 minutes required
-- evidence attachments required
+- evidence attachments required (two screenshots attached directly to the slash command)
 - manual review required
 - earns 1 quota point
 - earns 1 promotion event point
@@ -132,6 +132,7 @@ That means:
 - attendees join through a clock-in style flow
 - event attendance records are generated from that flow
 - staff should not have to submit individual manual logs for normal hosted events
+- when the host submits the event for review, Jane shows an **Upload files** button; the host presses it and attaches exactly two event screenshots in the form
 
 This was one of the biggest clarifications from the transcript: normal HG activities should not be per-user manual submissions.
 

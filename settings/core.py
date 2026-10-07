@@ -122,10 +122,6 @@ generalErrorLogBackupCount = 5
 automationReportChannelId = 0
 autoGitUpdateEnabled = False
 enablePrivateExtensions = False
-enableDestructiveCommands = False
-destructiveCommandsDryRun = True
-disableGitPullOnManualRestart = True
-allowGitPullOnManualRestart = False
 autoGitUpdateRemote = "origin"
 autoGitUpdateBranch = ""
 autoGitUpdateCheckIntervalSec = 60
@@ -140,13 +136,9 @@ autoGitUpdatePreservePaths = [
     "backups/serverSnapshots",
     "backups/serverSnapshotsOffsite",
 ]
-copyServerRoleBatchCreateLimit = 12
-copyServerRoleBatchMutationLimit = 18
 
 # Optional extension layers.
 extraExtensionNames: list[str] = []
-destructiveCommandGuildIds = []
-destructiveCommandCooldownSec = 30
 
 # Optional config sanity suppressions (ID keys intentionally left unset).
 configSanityOptionalIdKeys = [

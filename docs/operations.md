@@ -4,14 +4,8 @@ This is the short practical doc for running Jane without remembering every opera
 
 ## Useful Runtime Tools
 
-- `?janeRuntime`
-  Runtime status snapshot
-- `!janeTerminal`
-  Read-only terminal-style status view
 - `/pause`
   Pause or unpause the bot, or pause a single command with a custom notice
-- `/restart`
-  Restart Jane, checking GitHub for safe updates first unless disabled
 
 ### Pausing a single command
 
@@ -28,7 +22,7 @@ The `/pause` panel has a command picker below the global pause button.
 Command pauses live in the `command_pauses` table and survive restarts, so a
 pause set for a maintenance window stays in place until someone lifts it.
 Pausing a group (`/link-hub`) also pauses its subcommands (`/link-hub add`).
-`/pause` and `/restart` can never be paused, so runtime control stays reachable.
+`/pause` can never be paused, so runtime control stays reachable.
 
 ## Logs
 
@@ -52,12 +46,11 @@ Server safety and snapshots live under:
 
 The practical recovery runbook is [Server Recovery](features/serverRecovery.md).
 
-Quarantine is currently disabled by configuration because it is high-risk and has had operational incidents. Treat any re-enable work as destructive/recovery work.
+The `/quarantine` command and the snapshot restore button have been removed. `/snapshot-menu` can still create and preview snapshots, and `/ops` can still take database backups, but Jane has no code that applies a snapshot or restores a database backup any more.
 
 ## High-Risk Feature Runbooks
 
 - [Sessions And BG Checks](features/sessions.md)
-- [Training Log Mirror](features/trainingLogMirror.md)
 - [Best Of](features/bestOf.md)
 - [Auto Git Update](autoGitUpdate.md)
 
@@ -67,8 +60,6 @@ Quarantine is currently disabled by configuration because it is high-risk and ha
 
 Check:
 
-- `?janeRuntime`
-- `!janeTerminal`
 - `logs/general-errors.log`
 
 ### If commands are missing
@@ -87,7 +78,6 @@ opt-in diagnostic for it, but normal installs should leave that off.
 Check:
 
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
-- `JANE_DISABLE_GIT_PULL_ON_RESTART`
 - whether the host is supervisor-managed
 
 Normal shutdown now waits for Jane's background work to stop before SQLite is
@@ -113,6 +103,5 @@ Usually it is one of these:
 
 ## What Not To Do
 
-- don't turn `!janeTerminal` into a remote shell
 - don't assume old backup JSON metadata paths are meaningful on a new machine
 - don't let auto-update become "blindly trust every push forever"

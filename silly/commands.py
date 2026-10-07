@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -86,7 +87,6 @@ _skinDoubleCooldownRoleIds = normalization.normalizeIntSet(
 _skinCommandNextAllowedAtByUser: dict[int, datetime] = {}
 _janeGreetingNextAllowedAtByUser: dict[int, datetime] = {}
 _recipeMapCache: dict[str, tuple[str, str]] | None = None
-_sixtySevenStreakByChannelUser: dict[tuple[int, int], int] = {}
 _killQuotes = [
     "{target} is being used to weigh down the reactor rods.",
     "{target} is being sent to manually inspect the turbine blades.",
@@ -101,10 +101,6 @@ _killQuotes = [
 
 def _normalizeText(value: str) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
-
-
-def _isSixtySevenTrigger(content: str) -> bool:
-    return str(content or "").strip() == "67"
 
 
 async def _tryChannelSend(channel: discord.abc.Messageable, content: str) -> bool:
@@ -333,320 +329,214 @@ async def _resolveMemberFromQuery(guild: discord.Guild, query: str) -> discord.M
     return None
 
 
-async def _resolveReplyTarget(message: discord.Message) -> discord.Member | None:
-    if not message.guild:
-        return None
+async def sendSkinEmbed(channel, botClient: discord.Client, embed: discord.Embed) -> bool:
+    if getattr(channel, "guild", None) is not None and botClient.user:
+        sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
+            botClient=botClient,
+            channel=channel,
+            webhookName="Jane Skinner",
+            embed=embed,
+            username="Jane Skinner",
+            avatarUrl=botClient.user.display_avatar.url,
+            reason="Skin command output",
+        )
+        if sentMessage is not None:
+            return True
+    return await _tryChannelSendEmbed(channel, embed)
 
-    for mentioned in list(message.mentions):
-        member = message.guild.get_member(int(getattr(mentioned, "id", 0) or 0))
-        if member is not None:
-            return member
 
+async def sendKillEmbed(channel, botClient: discord.Client, embed: discord.Embed) -> bool:
+    if getattr(channel, "guild", None) is not None and botClient.user:
+        sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
+            botClient=botClient,
+            channel=channel,
+            webhookName="Jane Clanker",
+            embed=embed,
+            username=str(botClient.user.display_name or botClient.user.name or "Jane Clanker"),
+            avatarUrl=botClient.user.display_avatar.url,
+            reason="Kill command output",
+        )
+        if sentMessage is not None:
+            return True
+    return await _tryChannelSendEmbed(
+        channel,
+        embed,
+        allowedMentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SillyOutcome:
+    """What a silly command wants said: plain text (refusal/joke) or an embed (success)."""
+
+    text: str | None = None
+    embed: discord.Embed | None = None
+    ephemeral: bool = False
+
+
+def _botMentionRegex(botUserId: int) -> re.Pattern[str]:
+    return re.compile(rf"<@!?{int(botUserId)}>")
+
+
+def stripBotMention(content: str, botUserId: int) -> str:
+    return _botMentionRegex(botUserId).sub("", str(content or "")).strip()
+
+
+def parseMentionCommand(content: str, botUserId: int) -> tuple[str, str]:
+    """Return (word, rest) for '@Jane word rest'; ('', '') if Jane's mention is not first."""
+    stripped = str(content or "").strip()
+    match = _botMentionRegex(botUserId).match(stripped)
+    if match is None:
+        return "", ""
+    word, rest = normalization.commandParts(stripped[match.end():])
+    return word.lstrip("!"), rest
+
+
+async def _referencedAuthorId(message: discord.Message) -> int:
     reference = getattr(message, "reference", None)
     if reference is None:
-        return None
-
+        return 0
     resolved = getattr(reference, "resolved", None)
     if isinstance(resolved, discord.Message):
-        authorId = int(getattr(getattr(resolved, "author", None), "id", 0) or 0)
-        if authorId > 0:
-            return await _getMemberById(message.guild, authorId)
-
+        return int(getattr(getattr(resolved, "author", None), "id", 0) or 0)
     messageId = int(getattr(reference, "message_id", 0) or 0)
     if messageId <= 0:
-        return None
-
+        return 0
     try:
         referencedMessage = await message.channel.fetch_message(messageId)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError):
-        return None
+        return 0
+    return int(getattr(getattr(referencedMessage, "author", None), "id", 0) or 0)
 
-    authorId = int(getattr(getattr(referencedMessage, "author", None), "id", 0) or 0)
-    if authorId <= 0:
+
+async def resolveTextTarget(
+    message: discord.Message,
+    rest: str,
+    *,
+    botUserId: int,
+) -> discord.Member | None:
+    if not message.guild:
+        return None
+    query = str(rest or "").strip()
+    if query:
+        try:
+            return await _resolveMemberFromQuery(message.guild, query)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+    # Jane is always mentioned by the trigger itself, so she is never the target.
+    for mentioned in list(message.mentions):
+        mentionedId = int(getattr(mentioned, "id", 0) or 0)
+        if mentionedId == int(botUserId):
+            continue
+        member = message.guild.get_member(mentionedId)
+        if member is not None:
+            return member
+    authorId = await _referencedAuthorId(message)
+    if authorId <= 0 or authorId == int(botUserId):
         return None
     return await _getMemberById(message.guild, authorId)
 
 
-def _buildSkinnedNickname(currentDisplayName: str) -> str:
-    match = re.match(r"^\[([^\]]+)\](.*)$", currentDisplayName or "")
-    if not match:
-        rawName = (currentDisplayName or "").strip()
-        if not rawName:
-            return "[BUM-SKINNED]"
-        return f"[BUM-SKINNED] {rawName}"[:32]
-
-    innerPrefix = match.group(1).strip()
-    rest = match.group(2)
-    firstPart = innerPrefix.split("-", 1)[0].strip() if innerPrefix else ""
-    if not firstPart:
-        firstPart = "BUM"
-    return f"[{firstPart}-SKINNED]{rest}"[:32]
-
-
-async def _sendSkinWebhook(
-    message: discord.Message,
-    botClient: discord.Client,
-    *,
-    content: str | None = None,
-    embed: discord.Embed | None = None,
-) -> bool:
-    if not message.guild or not botClient.user:
-        return False
-    sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
-        botClient=botClient,
-        channel=message.channel,
-        webhookName="Jane Skinner",
-        content=content,
-        embed=embed,
-        username="Jane Skinner",
-        avatarUrl=botClient.user.display_avatar.url,
-        reason="Skin command output",
-    )
-    return sentMessage is not None
-
-
-async def _sendKillWebhook(
-    message: discord.Message,
-    botClient: discord.Client,
-    *,
-    embed: discord.Embed,
-) -> bool:
-    if not message.guild or not botClient.user:
-        return False
-    sentMessage = await runtimeWebhooks.sendOwnedWebhookMessageDetailed(
-        botClient=botClient,
-        channel=message.channel,
-        webhookName="Jane Clanker",
-        embed=embed,
-        username=str(botClient.user.display_name or botClient.user.name or "Jane Clanker"),
-        avatarUrl=botClient.user.display_avatar.url,
-        reason="Kill command output",
-    )
-    return sentMessage is not None
-
-
-async def handleKillCommand(message: discord.Message, botClient: discord.Client) -> bool:
-    if message.author.bot or not message.content:
-        return False
-    if not message.guild or not isinstance(message.author, discord.Member):
-        return False
-
-    raw = message.content.strip()
-    if raw.split(maxsplit=1)[0].lower() != "!kill":
-        return False
-
-    if not runtimePermissions.hasMiddleHighRankRole(message.author):
-        await _tryChannelSend(message.channel, "Only MR/HR roles can use `!kill`.")
-        return True
-
-    parts = raw.split(maxsplit=1)
-    target: discord.Member | None = None
-    if len(parts) >= 2 and parts[1].strip():
-        try:
-            target = await _resolveMemberFromQuery(message.guild, parts[1].strip())
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            target = None
-    else:
-        target = await _resolveReplyTarget(message)
-
+def buildKillOutcome(actor: discord.Member, target: discord.Member | None) -> SillyOutcome:
+    if not runtimePermissions.hasMiddleHighRankRole(actor):
+        return SillyOutcome(text="Only MR/HR roles can use kill.", ephemeral=True)
     if target is None:
-        await _tryChannelSend(message.channel, "Usage: `!kill @user`")
-        return True
+        return SillyOutcome(text="Usage: `/kill` or `@Jane kill @user`", ephemeral=True)
 
     nowUtc = datetime.now(timezone.utc)
     scheduledAt = nowUtc + timedelta(seconds=random.randint(60, 3600))
     timestampText = f"<t:{int(scheduledAt.timestamp())}:R>"
     quote = random.choice(_killQuotes).format(target=target.mention)
-
     embed = discord.Embed(
         title="Execution Scheduled",
         description=f"**{quote}**\n\n-# {target.mention}'s execution takes place {timestampText}.",
         color=discord.Color.orange(),
         timestamp=nowUtc,
     )
-    embed.set_footer(text=f"Command used by {message.author.display_name}")
-
-    sentViaWebhook = await _sendKillWebhook(message, botClient, embed=embed)
-    if not sentViaWebhook:
-        await _tryChannelSendEmbed(
-            message.channel,
-            embed=embed,
-            allowedMentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
-        )
-    return True
+    embed.set_footer(text=f"Command used by {actor.display_name}")
+    return SillyOutcome(embed=embed)
 
 
-async def handleSkinCommand(
-    message: discord.Message,
-    botClient: discord.Client,
+def buildSkinOutcome(
+    actor: discord.Member,
+    target: discord.Member | None,
     *,
     hasSkinPermission: Callable[[discord.Member], bool],
-) -> bool:
-    if message.author.bot or not message.content:
-        return False
-    if not message.guild or not isinstance(message.author, discord.Member):
-        return False
+) -> SillyOutcome:
+    if int(actor.id) not in _skinAllowedUserIds and not hasSkinPermission(actor):
+        return SillyOutcome(text="You do not have permission to skin users.", ephemeral=True)
 
-    raw = message.content.strip()
-    if not raw.lower().startswith("!skin"):
-        return False
-
-    parts = raw.split(maxsplit=1)
-    if int(message.author.id) not in _skinAllowedUserIds and not hasSkinPermission(message.author):
-        await _tryChannelSend(message.channel, "You do not have permission to skin users.")
-        return True
-
-    if not _isSkinCooldownBypassed(message.author):
+    if not _isSkinCooldownBypassed(actor):
         nowUtc = datetime.now(timezone.utc)
         _pruneCooldownMap(_skinCommandNextAllowedAtByUser, nowUtc)
-        nextAllowedAt = _skinCommandNextAllowedAtByUser.get(int(message.author.id))
+        nextAllowedAt = _skinCommandNextAllowedAtByUser.get(int(actor.id))
         if nextAllowedAt and nextAllowedAt > nowUtc:
             remainingSec = max(1, int((nextAllowedAt - nowUtc).total_seconds()))
             mins, secs = divmod(remainingSec, 60)
             waitText = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-            await _tryChannelSend(message.channel, f"You're on cooldown for `!skin`. Try again in {waitText}.")
-            return True
-        cooldownSec = _skinCooldownSecForMember(message.author)
+            return SillyOutcome(text=f"You're on cooldown for skin. Try again in {waitText}.", ephemeral=True)
+        cooldownSec = _skinCooldownSecForMember(actor)
         if cooldownSec > 0:
-            _skinCommandNextAllowedAtByUser[int(message.author.id)] = nowUtc + timedelta(seconds=cooldownSec)
-
-    target: discord.Member | None = None
-    if len(parts) >= 2 and parts[1].strip():
-        query = parts[1].strip()
-        try:
-            target = await _resolveMemberFromQuery(message.guild, query)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            target = None
-    else:
-        target = await _resolveReplyTarget(message)
+            _skinCommandNextAllowedAtByUser[int(actor.id)] = nowUtc + timedelta(seconds=cooldownSec)
 
     if target is None:
-        await _tryChannelSend(message.channel, "Usage: `!skin username`")
-        return True
-
+        return SillyOutcome(text="Usage: `/skin` or `@Jane skin username`", ephemeral=True)
     if bool(getattr(target, "bot", False)) or bool(getattr(target, "system", False)):
-        await _tryChannelSend(message.channel, "I can't skin bots or app accounts.")
-        return True
-
+        return SillyOutcome(text="I can't skin bots or app accounts.")
     if int(target.id) == _janeUserId:
-        await _tryChannelSend(message.channel, "why would i skin myself????")
-        return True
-
+        return SillyOutcome(text="why would i skin myself????")
     if int(target.id) == _momUserId:
-        await _tryChannelSend(message.channel, "That's my mom, dude :woman_standing:")
-        return True
-
+        return SillyOutcome(text="That's my mom, dude :woman_standing:")
     if int(target.id) == _unknownUserId:
-        await _tryChannelSend(message.channel, "Sorry, but no. Get skinned. heh.")
-
-        newNickname = _buildSkinnedNickname(message.author.display_name)
-        try:
-            await message.author.edit(
-                nick=newNickname,
-                reason=f"Reverse skinned by {target} ({target.id})",
-            )
-        except (discord.Forbidden, discord.HTTPException):
-            await _tryChannelSend(message.channel, "I couldn't change that nickname (role hierarchy or permissions).")
-            return True
-
-        return True
-
-    newNickname = _buildSkinnedNickname(target.display_name)
-    if target.display_name == newNickname:
-        await _tryChannelSend(message.channel, f"{target.mention} is already skinned.")
-        return True
-
-    try:
-        await target.edit(
-            nick=newNickname,
-            reason=f"Skinned by {message.author} ({message.author.id})",
-        )
-    except (discord.Forbidden, discord.HTTPException):
-        await _tryChannelSend(message.channel, "I couldn't change that nickname (role hierarchy or permissions).")
-        return True
+        return SillyOutcome(text="Sorry, but no. Get skinned. heh.")
 
     jokes = [
         f"{target.mention} has been skinned. What a bum.",
-        f"{target.mention} got skinned by {message.author.mention}. Tragic.",
+        f"{target.mention} got skinned by {actor.mention}. Tragic.",
         f"Skinning complete: {target.mention} has entered the leather era.",
         f"{target.mention} has been skinned. Somebody alert ANRO dermatology.",
-        f"{message.author.mention} has claimed another victim, {target.mention} will never recover :pensive:",
+        f"{actor.mention} has claimed another victim, {target.mention} will never recover :pensive:",
     ]
-    chosenLine = random.choice(jokes)
     embed = discord.Embed(
         title="Skinning has been completed",
-        description=f"\n\n{chosenLine}",
+        description=f"\n\n{random.choice(jokes)}",
         color=discord.Color.orange(),
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_footer(text=f"Command used by {message.author.display_name}")
-
-    sentViaWebhook = await _sendSkinWebhook(message, botClient, embed=embed)
-    if not sentViaWebhook:
-        await _tryChannelSendEmbed(message.channel, embed)
-    return True
+    embed.set_footer(text=f"Command used by {actor.display_name}")
+    return SillyOutcome(embed=embed)
 
 
-async def handleCasinoToggleCommand(message: discord.Message) -> bool:
-    if message.author.bot or not message.content:
-        return False
-    if not message.guild or not isinstance(message.author, discord.Member):
-        return False
-
-    raw = message.content.strip()
-    if not raw.lower().startswith("!casinotoggle"):
-        return False
-
-    if not message.author.guild_permissions.administrator:
-        await _tryChannelSend(message.channel, "You do not have permission to use this command.")
-        return True
-
-    from silly import gamblingCog
-
-    parts = raw.split(maxsplit=1)
-    explicitArg = parts[1].strip().lower() if len(parts) > 1 else ""
-    if explicitArg in {"on", "enable", "enabled", "true", "1"}:
-        enabled = gamblingCog.setCategoryLockEnabled(True)
-    elif explicitArg in {"off", "disable", "disabled", "false", "0"}:
-        enabled = gamblingCog.setCategoryLockEnabled(False)
-    else:
-        enabled = gamblingCog.toggleCategoryLockEnabled()
-
-    stateText = "ENABLED" if enabled else "DISABLED"
-    await _tryChannelSend(message.channel, f"Gambling category lock is now **{stateText}**.")
-    return True
+def _isGuildMember(author: object) -> bool:
+    return isinstance(author, discord.Member)
 
 
-async def maybeHandleSixtySevenSpam(message: discord.Message) -> bool:
-    if message.author.bot or not message.guild or not isinstance(message.author, discord.Member):
-        return False
+async def handleKillMention(message: discord.Message, botClient: discord.Client, rest: str) -> None:
+    if not message.guild or botClient.user is None or not _isGuildMember(message.author):
+        return
+    target = await resolveTextTarget(message, rest, botUserId=int(botClient.user.id))
+    outcome = buildKillOutcome(message.author, target)
+    if outcome.embed is not None:
+        await sendKillEmbed(message.channel, botClient, outcome.embed)
+    elif outcome.text:
+        await _tryChannelSend(message.channel, outcome.text)
 
-    channelId = int(getattr(message.channel, "id", 0) or 0)
-    if channelId <= 0:
-        return False
 
-    authorId = int(message.author.id)
-    streakKey = (channelId, authorId)
-    if not _isSixtySevenTrigger(str(message.content or "")):
-        _sixtySevenStreakByChannelUser.pop(streakKey, None)
-        return False
-
-    streakCount = int(_sixtySevenStreakByChannelUser.get(streakKey, 0) or 0) + 1
-    _sixtySevenStreakByChannelUser[streakKey] = streakCount
-    if streakCount < 5:
-        return False
-
-    _sixtySevenStreakByChannelUser.pop(streakKey, None)
-    await _tryChannelSend(message.channel, "cease")
-
-    try:
-        await message.author.timeout(
-            timedelta(seconds=15),
-            reason='Sent "67" five times in a row.',
-        )
-    except (discord.Forbidden, discord.HTTPException, TypeError, ValueError):
-        pass
-    return True
+async def handleSkinMention(
+    message: discord.Message,
+    botClient: discord.Client,
+    rest: str,
+    *,
+    hasSkinPermission: Callable[[discord.Member], bool],
+) -> None:
+    if not message.guild or botClient.user is None or not _isGuildMember(message.author):
+        return
+    target = await resolveTextTarget(message, rest, botUserId=int(botClient.user.id))
+    outcome = buildSkinOutcome(message.author, target, hasSkinPermission=hasSkinPermission)
+    if outcome.embed is not None:
+        await sendSkinEmbed(message.channel, botClient, outcome.embed)
+    elif outcome.text:
+        await _tryChannelSend(message.channel, outcome.text)
 
 
 async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.Client) -> None:
@@ -656,37 +546,38 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
     if botUser is None:
         return
 
-    content = str(message.content or "")
-    if await _maybeSendDirectSillyResponse(message, content):
-        return
-
+    # Without the Message Content intent Discord only delivers text for
+    # messages that mention Jane, so every reply below is mention-gated.
     isMentioningJane = any(int(user.id) == int(botUser.id) for user in message.mentions)
     if not isMentioningJane:
         return
 
+    content = str(message.content or "")
+    if await _maybeSendDirectSillyResponse(message, stripBotMention(content, int(botUser.id))):
+        return
+
     #hampter
-    if int(message.author.id) in _hampterUserIds and _isHampterTrigger(content) and isMentioningJane:
+    if int(message.author.id) in _hampterUserIds and _isHampterTrigger(content):
         if await _tryChannelSend(message.channel, _hampterGifUrl):
             await interactionRuntime.safeMessageDelete(message)
         return
 
-    if isMentioningJane:
-        furryQueryMatch = _furryQueryRegex.search(content)
-        if furryQueryMatch:
-            queriedUserId = int(furryQueryMatch.group(1))
-            reply = "Yes" if queriedUserId == _furryUserId else "unknown"
-            await _tryChannelSend(message.channel, reply)
-            return
+    furryQueryMatch = _furryQueryRegex.search(content)
+    if furryQueryMatch:
+        queriedUserId = int(furryQueryMatch.group(1))
+        reply = "Yes" if queriedUserId == _furryUserId else "unknown"
+        await _tryChannelSend(message.channel, reply)
+        return
 
-        if _whoIsFurryRegex.search(content):
-            await interactionRuntime.safeChannelSend(
-                message.channel,
-                content=f"<@{_furryUserId}> is a furry",
-                allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
-            )
-            return
+    if _whoIsFurryRegex.search(content):
+        await interactionRuntime.safeChannelSend(
+            message.channel,
+            content=f"<@{_furryUserId}> is a furry",
+            allowed_mentions=discord.AllowedMentions(users=False, roles=False, everyone=False),
+        )
+        return
 
-    if isMentioningJane and _isBumLocatorTrigger(content):
+    if _isBumLocatorTrigger(content):
         locatingMessage = await interactionRuntime.safeChannelSend(
             message.channel,
             content=":compass: Locating...",
@@ -713,7 +604,7 @@ async def maybeHandleSillyMentions(message: discord.Message, botClient: discord.
         )
         return
 
-    if isMentioningJane and _isAuraTrigger(content):
+    if _isAuraTrigger(content):
         await _tryChannelSend(message.channel, _auraText)
         return
 

@@ -62,7 +62,7 @@ The sheet functions are regular callable functions, but they are blocking Google
 - `runtime.taskSupervisor.TaskSupervisor` owns background tasks and cleans them up.
 - `runtime.retryQueue.RetryQueue` accepts new job handlers with `registerHandler(...)`.
 - `db.sqlite.runWriteTransaction(...)` is the safe boundary for multi-step SQLite changes.
-- `features.operations.serverSafety` exposes snapshot, preview, restore, and quarantine service calls.
+- `features.operations.serverSafety` exposes snapshot and preview service calls.
 - `runtime.extensionLayout` loads normal cogs plus optional public/private plugin extensions.
 
 These are intentionally plain Python callables. A future cog, maintenance job, HTTP route, or sibling bot can reuse the service without pretending to be a Discord interaction.

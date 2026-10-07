@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -69,14 +70,6 @@ class _UnsafePreserveConfig(_Config):
     ]
 
 
-class _ManualRestartDisabledConfig(_Config):
-    disableGitPullOnManualRestart = True
-
-
-class _ManualRestartLegacyConfig(_Config):
-    allowGitPullOnManualRestart = False
-
-
 class GitUpdateDependencyTests(unittest.TestCase):
     def test_requirements_changed_detects_root_requirements_file(self):
         self.assertTrue(gitUpdate._requirementsChanged(["requirements.txt"]))
@@ -87,6 +80,119 @@ class GitUpdateDependencyTests(unittest.TestCase):
         self.assertFalse(gitUpdate._requirementsChanged([]))
         self.assertFalse(gitUpdate._requirementsChanged(["docs/requirements.txt"]))
         self.assertFalse(gitUpdate._requirementsChanged(["requirements-dev.txt"]))
+
+
+class GitUpdateBackupLocationTests(unittest.TestCase):
+    def _coordinator(self, repoRoot: Path, configModule: object | None = None) -> gitUpdate.GitUpdateCoordinator:
+        return gitUpdate.GitUpdateCoordinator(
+            botClient=_Dummy(),
+            configModule=configModule or _Config(),
+            pauseController=_Dummy(),
+            processControlModule=_Dummy(),
+            repoRoot=str(repoRoot),
+            auditStream=None,
+        )
+
+    def _workspace(self) -> tuple[Path, Path]:
+        workspaceContext = tempfile.TemporaryDirectory()
+        self.addCleanup(workspaceContext.cleanup)
+        workspace = Path(workspaceContext.name).resolve()
+        repoRoot = workspace / "Jane"
+        (repoRoot / "backups" / "serverSnapshots").mkdir(parents=True)
+        (repoRoot / "bot.db").write_bytes(b"database")
+        (repoRoot / "backups" / "serverSnapshots" / "guild.json").write_bytes(b"x" * 2048)
+        return workspace, repoRoot
+
+    def test_backup_is_written_beside_the_repo_not_in_the_system_temp_dir(self):
+        workspace, repoRoot = self._workspace()
+        systemTemp = workspace / "system-temp"
+        systemTemp.mkdir()
+        coordinator = self._coordinator(repoRoot)
+
+        with patch.object(gitUpdate.tempfile, "gettempdir", return_value=str(systemTemp)):
+            tempRoot, manifest = coordinator._backupPreservedPathsSync()
+
+        self.assertEqual(tempRoot.parent, workspace / ".jane-git-update")
+        self.assertTrue(tempRoot.name.startswith("jane-git-update-"))
+        self.assertEqual((tempRoot / "bot.db").read_bytes(), b"database")
+        self.assertTrue((tempRoot / "backups" / "serverSnapshots" / "guild.json").is_file())
+        self.assertTrue(manifest["bot.db"])
+        self.assertEqual(list(systemTemp.iterdir()), [])
+
+    def test_configured_backup_dir_is_used(self):
+        workspace, repoRoot = self._workspace()
+        configuredDir = workspace / "disk" / "updater"
+
+        class _BackupDirConfig(_Config):
+            autoGitUpdateBackupDir = str(configuredDir)
+
+        tempRoot, _manifest = self._coordinator(repoRoot, _BackupDirConfig())._backupPreservedPathsSync()
+
+        self.assertEqual(tempRoot.parent, configuredDir)
+
+    def test_backup_dir_inside_the_repo_is_rejected(self):
+        _workspace, repoRoot = self._workspace()
+
+        class _InsideRepoConfig(_Config):
+            autoGitUpdateBackupDir = str(repoRoot / "runtime" / "data" / "updater")
+
+        coordinator = self._coordinator(repoRoot, _InsideRepoConfig())
+
+        with self.assertRaisesRegex(RuntimeError, "inside the repository"):
+            coordinator._backupPreservedPathsSync()
+        self.assertFalse((repoRoot / "runtime" / "data" / "updater").exists())
+
+    def test_backup_is_refused_when_the_disk_lacks_room_for_it(self):
+        workspace, repoRoot = self._workspace()
+        coordinator = self._coordinator(repoRoot)
+        tooSmall = shutil.disk_usage(workspace)._replace(free=1024)
+
+        with patch.object(gitUpdate.shutil, "disk_usage", return_value=tooSmall):
+            with self.assertRaisesRegex(RuntimeError, "Not enough free space"):
+                coordinator._backupPreservedPathsSync()
+
+        backupParent = workspace / ".jane-git-update"
+        leftovers = list(backupParent.iterdir()) if backupParent.exists() else []
+        self.assertEqual(leftovers, [])
+
+    def test_failed_copy_does_not_leave_a_partial_backup_behind(self):
+        workspace, repoRoot = self._workspace()
+        coordinator = self._coordinator(repoRoot)
+
+        with patch.object(gitUpdate.shutil, "copytree", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                coordinator._backupPreservedPathsSync()
+
+        self.assertEqual(list((workspace / ".jane-git-update").iterdir()), [])
+
+    def test_leftover_backups_are_found_in_the_backup_dir_and_the_system_temp_dir(self):
+        workspace, repoRoot = self._workspace()
+        systemTemp = workspace / "system-temp"
+        (systemTemp / "jane-git-update-oldtmp").mkdir(parents=True)
+        (systemTemp / "unrelated").mkdir()
+        (workspace / ".jane-git-update" / "jane-git-update-olddisk").mkdir(parents=True)
+        coordinator = self._coordinator(repoRoot)
+
+        with patch.object(gitUpdate.tempfile, "gettempdir", return_value=str(systemTemp)):
+            leftovers = coordinator._leftoverBackupDirs()
+
+        self.assertEqual(
+            sorted(path.name for path in leftovers),
+            ["jane-git-update-olddisk", "jane-git-update-oldtmp"],
+        )
+
+    def test_start_warns_about_leftover_backups_even_when_auto_update_is_disabled(self):
+        workspace, repoRoot = self._workspace()
+        leftover = workspace / ".jane-git-update" / "jane-git-update-olddisk"
+        leftover.mkdir(parents=True)
+        coordinator = self._coordinator(repoRoot)
+
+        with self.assertLogs(gitUpdate.log, level="WARNING") as captured:
+            coordinator.start()
+
+        self.assertIsNone(coordinator.workerTask)
+        self.assertTrue(any(str(leftover) in line for line in captured.output))
+        self.assertTrue(leftover.is_dir())
 
 
 class GitUpdatePreservePathTests(unittest.TestCase):
@@ -103,7 +209,6 @@ class GitUpdatePreservePathTests(unittest.TestCase):
         paths = coordinator._preservePaths()
 
         self.assertIn("custom/runtime", paths)
-        self.assertIn("runtime/data/copyserver", paths)
         self.assertIn("backups/serverSnapshots", paths)
         self.assertIn("bot.db", paths)
 
@@ -170,129 +275,7 @@ class GitUpdatePreservePathTests(unittest.TestCase):
         self.assertEqual(environment["PIP_BREAK_SYSTEM_PACKAGES"], "1")
 
 
-class GitUpdateManualRestartTests(unittest.TestCase):
-    def _coordinator(self, configModule):
-        return gitUpdate.GitUpdateCoordinator(
-            botClient=_Dummy(),
-            configModule=configModule,
-            pauseController=_Dummy(),
-            processControlModule=_Dummy(),
-            repoRoot=".",
-            auditStream=None,
-        )
-
-    def test_manual_restart_pull_is_enabled_by_default(self):
-        self.assertTrue(self._coordinator(_Config())._manualPullAllowed())
-
-    def test_manual_restart_pull_uses_new_disable_flag(self):
-        self.assertFalse(self._coordinator(_ManualRestartDisabledConfig())._manualPullAllowed())
-
-    def test_legacy_false_allow_flag_still_disables_manual_pull(self):
-        self.assertFalse(self._coordinator(_ManualRestartLegacyConfig())._manualPullAllowed())
-
-
-class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disabled_manual_pull_restarts_without_pull(self):
-        coordinator = gitUpdate.GitUpdateCoordinator(
-            botClient=_Dummy(),
-            configModule=_ManualRestartDisabledConfig(),
-            pauseController=_Dummy(),
-            processControlModule=_Dummy(),
-            repoRoot=".",
-            auditStream=None,
-        )
-
-        result = await coordinator.runManualRestartFlow()
-
-        self.assertEqual(result["action"], "restart-only")
-        self.assertEqual(result["gitOutcome"], "skipped")
-        self.assertIn("Git pull on restart is disabled", result["message"])
-        self.assertIn("Restarting Jane without pulling", result["message"])
-
-    async def test_no_pending_update_restarts_without_pull(self):
-        class UpToDateCoordinator(gitUpdate.GitUpdateCoordinator):
-            async def _inspectUpdateState(self) -> dict:
-                return {
-                    "remote": "origin",
-                    "branch": "main",
-                    "aheadCount": 0,
-                    "behindCount": 0,
-                    "upstreamCodePaths": [],
-                    "blockingPaths": [],
-                }
-
-        coordinator = UpToDateCoordinator(
-            botClient=_Dummy(),
-            configModule=_Config(),
-            pauseController=_Dummy(),
-            processControlModule=_Dummy(),
-            repoRoot=".",
-            auditStream=None,
-        )
-
-        result = await coordinator.runManualRestartFlow()
-
-        self.assertEqual(result["action"], "restart-only")
-        self.assertEqual(result["gitOutcome"], "not-needed")
-        self.assertIn("No GitHub code changes", result["message"])
-        self.assertIn("Restarting Jane without pulling", result["message"])
-
-    async def test_failed_manual_restart_check_restarts_without_pull(self):
-        class FailingInspectCoordinator(gitUpdate.GitUpdateCoordinator):
-            async def _inspectUpdateState(self) -> dict:
-                raise RuntimeError("git fetch failed")
-
-        coordinator = FailingInspectCoordinator(
-            botClient=_Dummy(),
-            configModule=_Config(),
-            pauseController=_Dummy(),
-            processControlModule=_Dummy(),
-            repoRoot=".",
-            auditStream=None,
-        )
-
-        with patch.object(gitUpdate.log, "exception") as exceptionLog:
-            result = await coordinator.runManualRestartFlow()
-
-        self.assertEqual(result["action"], "restart-only")
-        self.assertEqual(result["gitOutcome"], "skipped")
-        self.assertIn("Git check failed", result["message"])
-        self.assertIn("Restarting Jane without pulling", result["message"])
-        exceptionLog.assert_called_once()
-
-    async def test_failed_manual_update_apply_restarts_when_nothing_was_pulled(self):
-        class FailingApplyCoordinator(gitUpdate.GitUpdateCoordinator):
-            async def _buildManualRestartPlan(self) -> dict:
-                return {
-                    "action": "pull-and-restart",
-                    "message": "Pulling latest changes.",
-                    "state": {"remote": "origin", "branch": "main"},
-                    "gitOutcome": "checking",
-                }
-
-            async def _applyAvailableUpdate(self, state: dict, *, triggeredBy: str) -> str:
-                self._lastResult = "failed"
-                self._lastApplyPulled = False
-                return "Git update failed: local state changed."
-
-        coordinator = FailingApplyCoordinator(
-            botClient=_Dummy(),
-            configModule=_Config(),
-            pauseController=_Dummy(),
-            processControlModule=_Dummy(),
-            repoRoot=".",
-            auditStream=None,
-        )
-
-        result = await coordinator.runManualRestartFlow()
-
-        self.assertEqual(result["action"], "restart-only")
-        self.assertEqual(result["gitOutcome"], "skipped")
-        self.assertEqual(
-            result["message"],
-            "Git update failed: local state changed. Restarting Jane without applying GitHub changes.",
-        )
-
+class GitUpdateApplyTests(unittest.IsolatedAsyncioTestCase):
     async def test_successful_code_update_signals_api_shutdown_before_closing_bot(self):
         class SuccessfulApplyCoordinator(gitUpdate.GitUpdateCoordinator):
             async def _buildMergePlans(self, relPaths: list[str]) -> dict:
@@ -344,7 +327,7 @@ class GitUpdateManualRestartFlowTests(unittest.IsolatedAsyncioTestCase):
                     "preservedDirtyPaths": [],
                     "mergeManagedDirtyPaths": [],
                 },
-                triggeredBy="manual-restart",
+                triggeredBy="scheduled",
             )
 
             self.assertIn("requested restart", message)

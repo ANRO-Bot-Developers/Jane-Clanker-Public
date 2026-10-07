@@ -2,16 +2,12 @@
 
 This is the "oh no, fix the server" map for Jane's snapshot-based recovery system.
 
-The goal is not perfection. Discord will not let a bot perfectly rebuild every possible thing. The goal is to keep enough structure saved that Jane can rebuild the important parts: roles, channels, permissions, and member role assignments.
+The goal is not perfection. Discord will not let a bot perfectly rebuild every possible thing. The goal is to keep enough structure saved that the important parts can be rebuilt: roles, channels, permissions, and member role assignments. Jane saves and previews snapshots; she no longer applies them.
 
 ## Where It Lives
 
 - `cogs/operations/serverSafetyCog.py`
 - `features/operations/serverSafety/snapshotStore.py`
-- `features/operations/serverSafety/snapshotRestore.py`
-- `features/operations/serverSafety/restoreRoles.py`
-- `features/operations/serverSafety/restoreChannels.py`
-- `features/operations/serverSafety/restoreMembers.py`
 - `features/operations/serverSafety/preview.py`
 - `runtime/maintenance.py`
 
@@ -76,57 +72,16 @@ The menu is the human-friendly surface for:
 
 - show known snapshots
 - create a manual snapshot
-- preview a restore
-- restore the selected snapshot
+- preview what a restore of the selected snapshot would change
 
 Snapshot controls require:
 
 - administrator or manage-server permission
 - a user ID allowed by `serverSafetyAllowedUserIds`, if configured
 
-Restore actions also go through the destructive action gate.
+The **Restore Selected** button and the reviewer DM approval step have been removed. The restore engine behind them has been deleted too, so Jane cannot apply a snapshot at all.
 
-`/snapshot-menu` is the whole restore path now.
-
-On the main server, Jane puts one last stop sign in front of the scary button. She DMs whoever has `serverSafetyRestoreVerifierRoleId` (the Chief Nuclear Officer) using the requester's main-server display name. They get six hours to check in with the requester, click **Continue**, and type `confirm restore`.
-
-Normally, you cannot rubber-stamp your own restore. Doop is the one exception and skips the reviewer step entirely.
-
-The preview is a little chunky, but it is not trying to write a novel. It names missing roles, categories, and channels, then gives useful counts for role settings, channel permissions/layout, category changes, and member roles. The reviewer gets that same summary in their DM. Jane also calls out extra live stuff and leaves it alone.
-
-The actual bypass list lives in `serverSafetyRestoreVerificationBypassUserIds`. Keep that list tiny. Bypassed restores still go through the normal destructive gate and still leave an audit trail.
-
-Servers that have actually been used with `!copyserver` get the same snapshot controls without the DM step. That carve-out is there so restores can be tested against a real copy without quietly turning destructive commands on everywhere.
-
-## Restore Flow
-
-Snapshot restore is basically:
-
-1. Reads the selected snapshot.
-2. Restores or maps roles.
-3. Restores categories.
-4. Restores channels.
-5. Finalizes category and channel order.
-6. Restores member role assignments.
-7. Says whether it finished cleanly, paused, or only got part of the job done.
-
-Jane checks that the snapshot actually belongs to the current guild before she starts. Renaming a file is not enough to sneak a different server's snapshot through.
-
-By default, snapshot restore does not delete extra roles or channels. Cleanup is a separate dangerous mode in the lower-level restore helper and should not be casually enabled.
-
-## Restore Limits
-
-Discord hierarchy rules still apply.
-
-Jane cannot magic past Discord. She still cannot:
-
-- edit roles above her highest role
-- assign roles above her highest role
-- manage channels she cannot see or manage
-- restore managed roles created by integrations or bots
-- perfectly restore every Discord setting if the API does not expose it
-
-Partial success is normal. A restore can map most roles and channels while still reporting some failures.
+The preview is a little chunky, but it is not trying to write a novel. It names missing roles, categories, and channels, then gives useful counts for role settings, channel permissions/layout, category changes, and member roles. Jane also calls out extra live stuff and leaves it alone.
 
 ## Emergency Checklist
 
@@ -135,17 +90,14 @@ If the server is actively on fire, do this slowly and deliberately:
 1. Pause Jane if other automation might make the situation worse.
 2. Open `/snapshot-menu` in the damaged guild.
 3. Select the newest known-good snapshot.
-4. Use preview before restore.
+4. Use preview to see what differs from the snapshot.
 5. Confirm the snapshot is for the same guild.
-6. Run restore only from an authorized recovery account.
-7. Read the returned counts for role, channel, category, and member changes. If Jane says she paused or only got partway through, believe her.
-8. Check audit logs and `logs/general-errors.log`.
-9. Create a new manual snapshot only after the server is stable again.
+6. Fix the server by hand from the preview. Jane no longer has a restore button.
+7. Check audit logs and `logs/general-errors.log`.
+8. Create a new manual snapshot only after the server is stable again.
 
 ## Config Checklist
 
-- `serverSafetyAlertChannelId`
-- `serverSafetyAlertRoleId`
 - `serverSafetySnapshotDir`
 - `serverSafetyOffsiteSnapshotDir`
 - `serverSafetyOffsiteSnapshotsEnabled`
@@ -153,22 +105,17 @@ If the server is actively on fire, do this slowly and deliberately:
 - `serverSafetyManualSnapshotKeepCount`
 - `serverSafetyWeeklySnapshotGuildIds`
 - `serverSafetyAllowedUserIds`
-- `serverSafetyRestoreVerifierRoleId`
-- `serverSafetyRestoreVerificationTimeoutSec`
-- `serverSafetyRestoreVerificationBypassUserIds`
 - `serverSafetyIgnoredCategoryIds`
 - `serverSafetyPreservedChannelIds`
 
 ## Quarantine Note
 
-Quarantine is separate from snapshot recovery.
-
-It is currently disabled by `serverSafetyQuarantineEnabled = False`. Treat any re-enable work as high-risk operational work, not a cute toggle.
+The `/quarantine` command, its panel, the Begin/End quarantine buttons, and the suspicious-delete alert that offered to start one have all been removed. The quarantine state store and the `serverSafetyQuarantine*`, `serverSafetyAlert*`, and `serverSafetyRestoreVerif*` settings are gone as well.
 
 ## Safe Edit Rules
 
-- Keep audit logging around snapshot creation and restore.
-- Do not increase destructive behavior without a very obvious config gate.
+- Keep audit logging around snapshot creation.
+- Do not add destructive behavior back without a very obvious config gate.
 - Do not reduce retention below two weekly snapshots.
 - Keep offsite mirroring boring and predictable.
-- Test restore changes in a test guild before trusting them in production.
+- Test snapshot and preview changes in a test guild before trusting them in production.

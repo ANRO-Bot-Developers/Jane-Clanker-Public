@@ -7,7 +7,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from features.staff.applications import service as applicationsService
 from features.staff.applications.panel import ApplicationsPanelView
 from features.staff.applications.cogMixins.configMixin import ApplicationsConfigMixin
 from features.staff.applications.cogMixins.flowMixin import ApplicationsFlowMixin
@@ -47,53 +46,6 @@ class ApplicationsCog(ApplicationsConfigMixin, ApplicationsFlowMixin, Applicatio
                 canBulkClose=self.isServerAdministrator(interaction.user),
             ),
             ephemeral=True,
-        )
-
-    @commands.command(name="applications", hidden=True)
-    async def applicationsTextCommand(
-        self,
-        ctx: commands.Context,
-        divisionKey: Optional[str] = None,
-        action: Optional[str] = None,
-    ) -> None:
-        if not ctx.guild or not isinstance(ctx.author, discord.Member):
-            return
-        if not self.canControlDivisionState(ctx.author):
-            await ctx.reply("You are not authorized to open/close applications.", mention_author=False)
-            return
-
-        divisionKeyNormalized = str(divisionKey or "").strip().lower()
-        actionNormalized = str(action or "").strip().lower()
-        if not divisionKeyNormalized or not actionNormalized:
-            await ctx.reply("Usage: `!applications <divisionKey> <open|close|status>`", mention_author=False)
-            return
-
-        division = self.getDivision(divisionKeyNormalized)
-        if not division:
-            known = ", ".join(self.divisionOrder) if self.divisionOrder else "none configured"
-            await ctx.reply(f"Unknown division key. Known keys: {known}", mention_author=False)
-            return
-
-        if actionNormalized in {"status", "state"}:
-            isOpen = await applicationsService.isDivisionOpen(ctx.guild.id, division["key"])
-            statusText = "OPEN" if isOpen else "CLOSED"
-            await ctx.reply(f"Applications for `{division['key']}` are currently **{statusText}**.", mention_author=False)
-            return
-
-        if actionNormalized in {"close", "closed", "disable", "disabled", "off"}:
-            isOpen = False
-        elif actionNormalized in {"open", "opened", "enable", "enabled", "reopen", "on"}:
-            isOpen = True
-        else:
-            await ctx.reply("Action must be one of: `open`, `close`, `status`.", mention_author=False)
-            return
-
-        await applicationsService.setDivisionOpen(ctx.guild.id, division["key"], isOpen)
-        updated = await self.refreshHubViewsForDivision(ctx.guild, division["key"])
-        stateText = "OPEN" if isOpen else "CLOSED"
-        await ctx.reply(
-            f"Applications for `{division['key']}` are now **{stateText}**. Updated {updated} hub message(s).",
-            mention_author=False,
         )
 
 

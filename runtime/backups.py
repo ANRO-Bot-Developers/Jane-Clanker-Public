@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -249,30 +248,3 @@ async def listBackups(configModule: Any, *, limit: int = 25) -> list[Path]:
     files = [path for path in directory.glob("*.db") if path.is_file()]
     files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return files[: max(1, min(200, int(limit or 25)))]
-
-
-async def restoreBackup(configModule: Any, *, backupFileName: str) -> Path:
-    directory = _backupDir(configModule)
-    source = (directory / backupFileName).resolve()
-    if not source.exists() or not source.is_file():
-        raise FileNotFoundError(f"Backup file not found: {backupFileName}")
-    if source.parent != directory:
-        raise ValueError("Invalid backup path")
-
-    target = _dbPath()
-    safetyCopy = _makeBackupFilePath(configModule, "pre_restore")
-
-    def _restore() -> None:
-        if target.exists():
-            shutil.copy2(target, safetyCopy)
-        shutil.copy2(source, target)
-        walPath = target.with_suffix(target.suffix + "-wal")
-        shmPath = target.with_suffix(target.suffix + "-shm")
-        if walPath.exists():
-            walPath.unlink(missing_ok=True)
-        if shmPath.exists():
-            shmPath.unlink(missing_ok=True)
-
-    await _runWithClosedDb(_restore)
-    await sqliteDb.initDb()
-    return target

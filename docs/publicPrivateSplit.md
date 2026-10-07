@@ -52,7 +52,6 @@ Just having the file is not supposed to be enough.
 
 Risky actions should also require:
 
-- `ENABLE_DESTRUCTIVE_COMMANDS=1`
 - allowed user checks
 - allowed guild checks
 - cooldowns

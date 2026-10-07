@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 GLOBAL_SCOPE_ID = 0
 # Runtime controls must stay reachable so a pause can always be undone.
 # Mirrors _runtimeControlAllowedWhilePaused in bot.py.
-EXEMPT_COMMAND_NAMES = frozenset({"pause", "restart"})
+EXEMPT_COMMAND_NAMES = frozenset({"pause"})
 _maxPauseMessageLength = 1500
 _defaultPauseMessage = "This command is paused right now. Please try again later."
 

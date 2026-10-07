@@ -24,7 +24,6 @@ _coreExtensionNames = [
     "cogs.community.publicUtilityCog",
     "cogs.community.eventCog",
     "cogs.community.bestOfCog",
-    "cogs.community.archiveCog",
     "cogs.community.infoCog",
     "cogs.community.identityCog",
     "cogs.community.pollCog",
@@ -35,9 +34,9 @@ _coreExtensionNames = [
     "cogs.operations.curfewCog",
     "cogs.operations.jailCog",
     "cogs.staff.voiceChatCog",
-    "silly.hallCog",
     "silly.gamblingCog",
     "silly.cookieCog",
+    "silly.sillyCommandsCog",
 ]
 _optionalExtensionListModules = [
     "plugins.public.extensionList",

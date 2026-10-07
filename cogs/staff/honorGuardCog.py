@@ -19,6 +19,7 @@ from features.staff.honorGuard import buildScaffoldStatus
 from features.staff.honorGuard import rendering as honorGuardRendering
 from features.staff.honorGuard import service as honorGuardService
 from runtime import cogGuards as runtimeCogGuards
+from runtime import evidenceUpload
 from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
@@ -732,33 +733,6 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             message=message,
         )
 
-    async def _collectTwoImageEvidenceMessage(
-        self,
-        *,
-        channel: discord.abc.Messageable,
-        userId: int,
-        timeoutSec: float = 180.0,
-    ) -> Optional[discord.Message]:
-        channelId = getattr(channel, "id", None)
-        if channelId is None:
-            return None
-
-        def check(message: discord.Message) -> bool:
-            # We only accept the submitter's next message in this channel with
-            # exactly two image attachments.
-            if message.author.id != userId:
-                return False
-            if message.channel.id != channelId:
-                return False
-            images = [att for att in message.attachments if _isImageAttachment(att)]
-            return len(images) == 2
-
-        try:
-            message = await self.bot.wait_for("message", check=check, timeout=timeoutSec)
-        except asyncio.TimeoutError:
-            return None
-        return message
-
     async def _resolveConfiguredMessageChannel(
         self,
         guild: discord.Guild,
@@ -1179,15 +1153,18 @@ class HonorGuardCog(runtimeCogGuards.InteractionGuardMixin, commands.Cog):
             if evidenceChannel is None:
                 evidenceChannel = interaction.channel
 
-            await self._safeReply(interaction, f"Upload two event screenshots in <#{evidenceChannel.id}> within 3 minutes.")
             # We reuse the evidence collector so solo/group flows behave the same.
-            evidenceMessage = await self._collectTwoImageEvidenceMessage(
-                channel=evidenceChannel,
-                userId=interaction.user.id,
+            evidenceMessage = await evidenceUpload.collectEvidenceUpload(
+                interaction,
+                prompt=f"Upload exactly two event screenshots within 3 minutes. They will be posted in <#{evidenceChannel.id}>.",
+                evidenceChannel=evidenceChannel,
+                minFiles=2,
+                maxFiles=2,
+                modalTitle="Event screenshots",
             )
             if evidenceMessage is None:
                 await interaction.followup.send(
-                    "Timed out waiting for two image screenshots. Event is still open.",
+                    "No valid upload was received in time. Event is still open.",
                     ephemeral=True,
                 )
                 return

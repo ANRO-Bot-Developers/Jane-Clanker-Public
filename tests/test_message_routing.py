@@ -1,115 +1,56 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from runtime.messageRouting import HumanMessageRouter, MessageRoutingMessages
 
+JANE_ID = 999
 
-def _message(content: str = "hello") -> SimpleNamespace:
+
+def _message(content: str = "hello", *, mentionsJane: bool = False, guild: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         content=content,
-        author=SimpleNamespace(id=10, bot=False, __str__=lambda self: "Test User"),
-        guild=SimpleNamespace(id=20, name="Test Guild"),
+        author=SimpleNamespace(id=10, bot=False),
+        guild=SimpleNamespace(id=20, name="Test Guild") if guild else None,
         channel=SimpleNamespace(send=AsyncMock()),
+        mentions=[SimpleNamespace(id=JANE_ID)] if mentionsJane else [],
     )
-
-
-def _asyncHandler(callOrder: list[str], name: str, result: bool = False) -> AsyncMock:
-    async def _handler(*_args, **_kwargs) -> bool:
-        callOrder.append(name)
-        return result
-
-    return AsyncMock(side_effect=_handler)
 
 
 def _buildRouter(
     *,
-    token: str = "hello",
+    command: tuple[str, str] = ("", ""),
     paused: bool = False,
     commandAllowed: bool = True,
     guildAllowed: bool = True,
     orgGate: tuple[bool, str] = (True, ""),
-    handlerResults: dict[str, bool] | None = None,
-) -> tuple[HumanMessageRouter, SimpleNamespace, SimpleNamespace, list[str]]:
-    handlerResults = handlerResults or {}
-    callOrder: list[str] = []
-    handlerNames = (
-        "secrets",
-        "allow",
-        "mirror-training",
-        "help",
-        "view-channels",
-        "username",
-        "purge",
-        "pair-db",
-        "terminal",
-        "shutdown",
-        "copy-server",
-        "runtime",
-        "leaderboard",
-        "flag-sync",
-        "permission-simulator",
-    )
-    handlers = {
-        name: _asyncHandler(callOrder, name, handlerResults.get(name, False))
-        for name in handlerNames
-    }
+    secretsHandled: bool = False,
+):
     textRouter = SimpleNamespace(
-        noteCopyServerWarningMessage=MagicMock(),
         handlePotatoGreeting=AsyncMock(return_value=False),
-        firstLowerToken=MagicMock(return_value=token),
-        handleJaneSecrets=handlers["secrets"],
-        handleAllowServer=handlers["allow"],
-        handleMirrorTrainingHistory=handlers["mirror-training"],
-        handleJaneHelp=handlers["help"],
-        handleViewAllChannels=handlers["view-channels"],
-        handleUsernameToUserId=handlers["username"],
-        handleChannelPurge=handlers["purge"],
-        handlePairDbNamesCommand=handlers["pair-db"],
-        handleJaneTerminal=handlers["terminal"],
-        handleShutdown=handlers["shutdown"],
-        handleCopyServer=handlers["copy-server"],
-        handleJaneRuntime=handlers["runtime"],
-        handleBgLeaderboardCommand=handlers["leaderboard"],
-        handleJaneFlagSync=handlers["flag-sync"],
-        handlePermissionSimulatorCommand=handlers["permission-simulator"],
+        handleJaneSecrets=AsyncMock(return_value=secretsHandled),
     )
     sillyCommands = SimpleNamespace(
-        maybeHandleSillyMentions=_asyncHandler(callOrder, "silly-mentions"),
-        maybeHandleSixtySevenSpam=_asyncHandler(callOrder, "sixty-seven"),
-        handleSkinCommand=_asyncHandler(callOrder, "skin"),
-        handleKillCommand=_asyncHandler(callOrder, "kill"),
-        handleCasinoToggleCommand=_asyncHandler(callOrder, "casino"),
+        parseMentionCommand=MagicMock(return_value=command),
+        handleKillMention=AsyncMock(),
+        handleSkinMention=AsyncMock(),
+        maybeHandleSillyMentions=AsyncMock(),
     )
-
-    async def _processCommands(_message) -> None:
-        callOrder.append("process-commands")
-
-    botClient = SimpleNamespace(
-        process_commands=AsyncMock(side_effect=_processCommands),
-        get_context=AsyncMock(return_value=SimpleNamespace(command=None)),
-    )
-    trainingStats = _asyncHandler(callOrder, "training-stats")
+    hasCohost = MagicMock(return_value=True)
     mirrorAttempt = AsyncMock()
     router = HumanMessageRouter(
-        botClient=botClient,
+        botClient=SimpleNamespace(user=SimpleNamespace(id=JANE_ID)),
         configModule=SimpleNamespace(),
         pauseController=SimpleNamespace(isPaused=MagicMock(return_value=paused)),
-        orgFeatureGateModule=SimpleNamespace(
-            isTokenEnabledForGuild=MagicMock(return_value=orgGate)
-        ),
+        orgFeatureGateModule=SimpleNamespace(isTokenEnabledForGuild=MagicMock(return_value=orgGate)),
         sillyCommandsModule=sillyCommands,
         textCommandRouterProvider=MagicMock(return_value=textRouter),
-        trainingStatsHandler=trainingStats,
-        hasCohostPermission=MagicMock(return_value=True),
+        hasCohostPermission=hasCohost,
         isCommandExecutionAllowed=MagicMock(return_value=commandAllowed),
         isGuildAllowedForCommands=MagicMock(return_value=guildAllowed),
         mirrorUnapprovedGuildCommandAttempt=mirrorAttempt,
-        manualTextCommandTokens={"!copyserver", "!janeterminal"},
-        lockedPrefixCommandTokens={"!kill", "!copyserver"},
         messages=MessageRoutingMessages(
             runtimePaused="paused",
             serverNotRecognized="unknown-server",
@@ -117,120 +58,123 @@ def _buildRouter(
             temporaryLock="temporarily-locked",
         ),
     )
-    return router, textRouter, botClient, callOrder
+    return router, textRouter, sillyCommands, mirrorAttempt, hasCohost
 
 
 class HumanMessageRouterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_personal_greeting_is_checked_before_command_routing(self) -> None:
-        router, textRouter, _botClient, _callOrder = _buildRouter()
+    async def test_greeting_and_secrets_run_for_every_message(self) -> None:
+        router, textRouter, silly, _mirror, _cohost = _buildRouter()
         message = _message()
-
         await router.handle(message)
-
         textRouter.handlePotatoGreeting.assert_awaited_once_with(message)
+        textRouter.handleJaneSecrets.assert_awaited_once_with(message)
+        silly.maybeHandleSillyMentions.assert_not_awaited()
 
-    async def test_active_handler_order_is_preserved(self) -> None:
-        router, textRouter, botClient, callOrder = _buildRouter()
-        message = _message()
+    async def test_secrets_short_circuit(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(secretsHandled=True)
+        await router.handle(_message(mentionsJane=True))
+        silly.parseMentionCommand.assert_not_called()
+        silly.maybeHandleSillyMentions.assert_not_awaited()
 
+    async def test_unmentioned_message_does_nothing_else(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("kill", ""))
+        message = _message("kill")
         await router.handle(message)
+        silly.handleKillMention.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
 
-        textRouter.noteCopyServerWarningMessage.assert_called_once_with(message)
-        self.assertEqual(
-            callOrder,
-            [
-                "secrets",
-                "allow",
-                "mirror-training",
-                "silly-mentions",
-                "help",
-                "view-channels",
-                "sixty-seven",
-                "skin",
-                "kill",
-                "casino",
-                "username",
-                "purge",
-                "pair-db",
-                "training-stats",
-                "terminal",
-                "shutdown",
-                "copy-server",
-                "runtime",
-                "leaderboard",
-                "flag-sync",
-                "permission-simulator",
-                "process-commands",
-            ],
-        )
-        botClient.process_commands.assert_awaited_once_with(message)
+    async def test_dm_with_kill_word_runs_nothing(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("kill", ""))
+        await router.handle(_message(mentionsJane=True, guild=False))
+        silly.handleKillMention.assert_not_awaited()
+        silly.maybeHandleSillyMentions.assert_not_awaited()
 
-    async def test_paused_manual_command_runs_allowed_handler_then_reports_pause(self) -> None:
-        router, textRouter, botClient, callOrder = _buildRouter(
-            token="!copyserver",
-            paused=True,
-        )
-        message = _message("!copyserver")
-
+    async def test_dm_with_non_command_word_gets_silly_reply(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("horse", ""))
+        message = _message(mentionsJane=True, guild=False)
         await router.handle(message)
+        silly.maybeHandleSillyMentions.assert_awaited_once_with(message, router.botClient)
+        silly.handleKillMention.assert_not_awaited()
 
-        self.assertEqual(callOrder, ["secrets", "copy-server"])
+    async def test_kill_mention_dispatches(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("kill", "<@5>"))
+        message = _message(mentionsJane=True)
+        await router.handle(message)
+        silly.handleKillMention.assert_awaited_once_with(message, router.botClient, "<@5>")
+        silly.maybeHandleSillyMentions.assert_not_awaited()
+
+    async def test_skin_mention_dispatches_with_cohost_check(self) -> None:
+        router, _textRouter, silly, _mirror, hasCohost = _buildRouter(command=("skin", "bob"))
+        message = _message(mentionsJane=True)
+        await router.handle(message)
+        silly.handleSkinMention.assert_awaited_once_with(
+            message, router.botClient, "bob", hasSkinPermission=hasCohost
+        )
+
+    async def test_other_mention_goes_to_silly_replies(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("horse", ""))
+        message = _message(mentionsJane=True)
+        await router.handle(message)
+        silly.maybeHandleSillyMentions.assert_awaited_once_with(message, router.botClient)
+        silly.handleKillMention.assert_not_awaited()
+
+    async def test_mid_sentence_kill_is_not_a_command(self) -> None:
+        # parseMentionCommand returns ("", "") when Jane's mention is not first.
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("", ""))
+        message = _message("hey <@999> kill him", mentionsJane=True)
+        await router.handle(message)
+        silly.handleKillMention.assert_not_awaited()
+        silly.maybeHandleSillyMentions.assert_awaited_once()
+
+    async def test_paused_replies_for_commands_and_silences_silly(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("kill", ""), paused=True)
+        message = _message(mentionsJane=True)
+        await router.handle(message)
         message.channel.send.assert_awaited_once_with("paused")
-        botClient.process_commands.assert_not_awaited()
-        textRouter.handleAllowServer.assert_not_awaited()
+        silly.handleKillMention.assert_not_awaited()
 
-    async def test_unapproved_manual_command_is_mirrored_and_rejected(self) -> None:
-        router, _textRouter, botClient, callOrder = _buildRouter(
-            token="!janeterminal",
-            guildAllowed=False,
-        )
-        message = _message("!janeterminal")
-
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("horse", ""), paused=True)
+        message = _message(mentionsJane=True)
         await router.handle(message)
-        if router._backgroundTasks:
-            await asyncio.gather(*router._backgroundTasks)
+        silly.maybeHandleSillyMentions.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
 
-        self.assertEqual(callOrder, ["secrets", "allow", "mirror-training"])
-        router.mirrorUnapprovedGuildCommandAttempt.assert_awaited_once()
+    async def test_unapproved_guild_is_rejected_and_mirrored(self) -> None:
+        router, _textRouter, silly, mirror, _cohost = _buildRouter(command=("skin", ""), guildAllowed=False)
+        message = _message(mentionsJane=True)
+        await router.handle(message)
+        await router.stop()
         message.channel.send.assert_awaited_once_with("unknown-server")
-        botClient.process_commands.assert_not_awaited()
+        self.assertEqual(mirror.call_args.kwargs["commandName"], "skin")
+        silly.handleSkinMention.assert_not_awaited()
+        silly.handleKillMention.assert_not_awaited()
 
-    async def test_restricted_user_can_still_reach_unlocked_prefix_commands(self) -> None:
-        router, _textRouter, botClient, callOrder = _buildRouter(
-            token="!ordinary",
-            commandAllowed=False,
+    async def test_unapproved_guild_wins_over_paused(self) -> None:
+        router, _textRouter, silly, mirror, _cohost = _buildRouter(
+            command=("kill", ""), guildAllowed=False, paused=True
         )
-        message = _message("!ordinary")
-
+        message = _message(mentionsJane=True)
         await router.handle(message)
+        await router.stop()
+        message.channel.send.assert_awaited_once_with("unknown-server")
+        mirror.assert_called_once()
+        silly.handleKillMention.assert_not_awaited()
 
-        self.assertEqual(
-            callOrder,
-            [
-                "secrets",
-                "allow",
-                "mirror-training",
-                "silly-mentions",
-                "help",
-                "view-channels",
-                "process-commands",
-            ],
-        )
-        botClient.process_commands.assert_awaited_once_with(message)
-
-    async def test_organization_gate_stops_routing_with_feature_name(self) -> None:
-        router, _textRouter, botClient, callOrder = _buildRouter(
-            orgGate=(False, "recruitment"),
-        )
-        message = _message()
-
+    async def test_temporary_lock_blocks_commands(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(command=("kill", ""), commandAllowed=False)
+        message = _message(mentionsJane=True)
         await router.handle(message)
+        message.channel.send.assert_awaited_once_with("temporarily-locked")
+        silly.handleKillMention.assert_not_awaited()
 
-        self.assertEqual(callOrder, ["secrets"])
-        message.channel.send.assert_awaited_once_with(
-            "feature-disabled (`recruitment`)"
+    async def test_org_gate_blocks_commands(self) -> None:
+        router, _textRouter, silly, _mirror, _cohost = _buildRouter(
+            command=("kill", ""), orgGate=(False, "silly")
         )
-        botClient.process_commands.assert_not_awaited()
+        message = _message(mentionsJane=True)
+        await router.handle(message)
+        message.channel.send.assert_awaited_once_with("feature-disabled (`silly`)")
+        silly.handleKillMention.assert_not_awaited()
 
 
 if __name__ == "__main__":

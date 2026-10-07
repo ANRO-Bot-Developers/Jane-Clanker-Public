@@ -22,32 +22,38 @@ The important idea: a session is not just a Discord message. It is database stat
 
 ## Commands People Actually Touch
 
-- `/orientation`
-  Starts an orientation session in the current text channel.
-
 - `/bg-add`
   Adds a Discord user to the next BGC spreadsheet Jane creates after an orientation.
 
 ## Orientation Flow
 
-The normal happy path looks like this:
+Orientation sessions are hosted by John Clanker. Jane's own `/orientation` command was removed in the cutover. John owns the Discord session (join, grading, result import, Finish) and the results post. Jane still creates the BGC spreadsheet.
 
-1. An instructor runs `/orientation password:<value>`.
-2. Jane creates a `sessions` row with status `OPEN`.
-3. Jane posts the orientation message with a persistent `SessionView`.
-4. Ten minutes after the orientation session is created, Jane starts a low-priority RoVer warmup sweep across the attendee list.
-5. Attendees press the join button and enter the password in a modal.
-6. Jane stores each attendee in the `attendees` table.
-7. The host presses `Change Grade`.
-8. Jane moves the session to `GRADING` and shows host-only grading controls.
-9. The host marks attendees as `PASS` or `FAIL`.
-10. The host presses `Finish`.
-11. Jane posts orientation results, marks the session `FINISHED`, and deletes the live session message.
-12. Jane creates the BGC spreadsheet for passing attendees plus any pending `/bg-add` users in the background and posts the link when it is ready.
+When John's host presses `Finish`, John calls Jane's orientation API:
 
-This flow is live, but treat `Finish` carefully. It posts results, changes session state, and kicks off follow-up spreadsheet work.
+- `POST /orientation/bgc-spreadsheet`
+- header `X-API-TOKEN`, the same token as `/enterOrientation` (`JANE_ORIENTATION_API_TOKEN`)
+- body: `requestId`, `guildId`, `hostId`, `passedUserIds`, and optionally `hostName`, plus `channelId` and `messageId` of John's session message. IDs may be strings or integers.
 
-The warmup sweep uses the shared Roblox API budget at a lower priority than normal commands and review tools. `/bg-intel`, recruitment work, ORBAT lookups, and similar foreground requests can move ahead of it even if warmup requests are already queued.
+Jane does not have to be a member of the server the orientation ran in. `guildId` selects her config, RoVer lookups and the `/bg-add` queue. `hostName` is the host's server nickname, which she uses for the forum entry title when she cannot look the host up herself.
+
+Jane answers `202` straight away and builds the sheet in the background through `routeExternalOrientationSpreadsheet` in `features/staff/sessions/bgSpreadsheetRouting.py`:
+
+1. Pending `/bg-add` users are appended to the passing attendees.
+2. The BGC template is copied and the rows are written. Jane does her own Roblox lookups.
+3. The `/bg-add` users that made it onto the sheet are marked consumed.
+4. The audit log is written, with John's host as requester and a link to John's session message.
+5. The link is posted to `bgCheckChannelId` and the forum entries are created.
+
+There is no row in `sessions` or `attendees` for a John-run orientation, so `/bg-add` users are consumed against session id `0` and no review buckets are assigned.
+
+A repeated `requestId` answers `200` with `"status": "duplicate"` and does nothing. The list of seen ids is kept in memory only.
+
+For this to work the API must be enabled (`JANE_ORIENTATION_API_ENABLED=1`) and reachable from John. The default bind is `127.0.0.1:24003`, which only works when both bots run on the same host.
+
+If the sheet never appears, check Jane's log for `Orientation API` lines.
+
+The session views, grading controls and `Finish` handling for Jane-hosted sessions are still in the codebase. They keep already-posted session messages working after a restart, but nothing starts a new Jane-hosted orientation.
 
 ## BG Queue Flow
 
@@ -187,9 +193,6 @@ Check these first when sessions or BG queues start acting haunted:
 
 - A user cannot clock in.
   Check whether they still have the New Applicant role if `newApplicantRoleId` is configured.
-
-- The host cannot start orientation.
-  Check `instructorRoleId`.
 
 - The host cannot finish.
   Check that every attendee has a grade.

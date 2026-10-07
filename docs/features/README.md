@@ -13,7 +13,6 @@ If you want more specific "what does this actual file do?" docs, check:
 - [BG Intelligence](bgIntelligence.md)
 - [Honor Guard](honorGuard.md)
 - [Server Recovery](serverRecovery.md)
-- [Training Log Mirror](trainingLogMirror.md)
 - [Best Of](bestOf.md)
 
 ## Community

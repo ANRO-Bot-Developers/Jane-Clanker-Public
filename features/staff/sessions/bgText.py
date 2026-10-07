@@ -35,12 +35,6 @@ def buildBgFinalSummaryText(
             "\n".join(moderatorStatsLines) if moderatorStatsLines else "(none)",
         ]
     )
-    lines.extend(
-        [
-            "",
-            "Check the Background Check Leaderboard with ?bgLeaderboard",
-        ]
-    )
     return "\n".join(lines)
 
 

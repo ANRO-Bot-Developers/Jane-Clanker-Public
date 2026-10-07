@@ -60,7 +60,7 @@ Basic flow:
 1. Create or activate a virtualenv.
 2. Install dependencies.
 3. Copy [`.env.example`](.env.example) to `.env`.
-4. Fill in the required secrets/tokens.
+4. Fill in the required secrets/tokens. In the Discord Developer Portal, only the Server Members privileged intent is required; Jane does not use the Message Content intent.
 5. Adjust `config.py` for any server-specific IDs or behavior.
 6. Start Jane.
 

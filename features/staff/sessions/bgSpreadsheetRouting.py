@@ -87,7 +87,7 @@ def _cleanOrientationHostName(value: object) -> str:
 
 async def _orientationHostName(
     bot: discord.Client,
-    guild: discord.Guild,
+    guild: discord.Guild | None,
     session: dict[str, Any],
 ) -> str:
     try:
@@ -97,16 +97,24 @@ async def _orientationHostName(
     if hostId <= 0:
         return "Unknown"
 
-    member = guild.get_member(hostId)
-    if member is None:
-        try:
-            member = await taskBudgeter.runDiscord(lambda: guild.fetch_member(hostId))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            member = None
+    # guild is None when the orientation ran in a server Jane is not a member of.
+    member = None
+    if guild is not None:
+        member = guild.get_member(hostId)
+        if member is None:
+            try:
+                member = await taskBudgeter.runDiscord(lambda: guild.fetch_member(hostId))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                member = None
     if member is not None:
         cleaned = _cleanOrientationHostName(member.nick or member.display_name or member.name)
         if cleaned:
             return cleaned
+
+    # An external caller (John Clanker) can supply the host's server nickname.
+    requestedName = _cleanOrientationHostName(session.get("hostName"))
+    if requestedName:
+        return requestedName
 
     user = bot.get_user(hostId)
     if user is None:
@@ -137,7 +145,7 @@ def _orientationSpreadsheetDateText(result: bgSpreadsheetQueue.BgSpreadsheetResu
 
 async def _postOrientationSpreadsheetForumEntries(
     bot: discord.Client,
-    guild: discord.Guild,
+    guild: discord.Guild | None,
     session: dict[str, Any],
     result: bgSpreadsheetQueue.BgSpreadsheetResult,
 ) -> None:
@@ -177,23 +185,17 @@ async def _postOrientationSpreadsheetForumEntries(
             )
 
 
-async def routeBgcSpreadsheet(
+async def _createAndRouteSpreadsheet(
     bot: discord.Client,
-    sessionId: int,
-    guild: discord.Guild,
+    guild: discord.Guild | None,
+    *,
+    session: dict[str, Any],
+    attendees: list[dict[str, Any]],
+    consumedSessionId: int,
+    sessionLabel: str,
 ) -> bgSpreadsheetQueue.BgSpreadsheetResult:
-    await _dep("ensureBgReviewBuckets")(bot, sessionId, guild)
-    session = await _dep("service").getSession(sessionId)
-    if not session:
-        return bgSpreadsheetQueue.BgSpreadsheetResult(
-            skipped_reason="Orientation session could not be found."
-        )
+    """Create the BGC sheet for known attendees, then log it and post the link."""
     guildId = int(session.get("guildId") or getattr(guild, "id", 0) or 0)
-    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
-    if not attendees:
-        return bgSpreadsheetQueue.BgSpreadsheetResult(
-            skipped_reason="No passing attendees need a BGC spreadsheet."
-        )
     manualUserIds = await bgAddQueue.pendingUserIds(guildId=guildId)
     spreadsheetAttendees = list(attendees)
     seenUserIds = {int(attendee.get("userId") or 0) for attendee in spreadsheetAttendees}
@@ -218,15 +220,18 @@ async def routeBgcSpreadsheet(
             await bgAddQueue.markConsumed(
                 guildId=guildId,
                 userIds=consumedManualUserIds,
-                sessionId=sessionId,
+                sessionId=consumedSessionId,
                 spreadsheetId=result.spreadsheet_id,
             )
         except Exception:
-            log.exception("Failed to consume /bg-add rows after BGC spreadsheet creation for session %s.", sessionId)
+            log.exception(
+                "Failed to consume /bg-add rows after BGC spreadsheet creation for session %s.",
+                sessionLabel,
+            )
 
     hostId = int(session.get("hostId") or 0)
     try:
-        detailParts = [f"Session: {int(sessionId)}", f"Candidates: {len(attendees)}"]
+        detailParts = [f"Session: {sessionLabel}", f"Candidates: {len(attendees)}"]
         if consumedManualUserIds:
             detailParts.append(f"Manual additions: {len(consumedManualUserIds)}")
         await bgSpreadsheetQueue.sendBgSpreadsheetChangeLog(
@@ -243,7 +248,7 @@ async def routeBgcSpreadsheet(
             details=" | ".join(detailParts),
         )
     except Exception:
-        log.exception("Failed to post BGC spreadsheet audit log for orientation session %s.", sessionId)
+        log.exception("Failed to post BGC spreadsheet audit log for orientation session %s.", sessionLabel)
 
     channelIds = sorted({int(channelId) for channelId in _bgSpreadsheetChannelIds(session) if int(channelId or 0) > 0})
     result.expected_channel_ids = list(channelIds)
@@ -261,3 +266,93 @@ async def routeBgcSpreadsheet(
         result.posted_channel_ids.append(int(channelId))
     await _postOrientationSpreadsheetForumEntries(bot, guild, session, result)
     return result
+
+
+async def routeBgcSpreadsheet(
+    bot: discord.Client,
+    sessionId: int,
+    guild: discord.Guild,
+) -> bgSpreadsheetQueue.BgSpreadsheetResult:
+    await _dep("ensureBgReviewBuckets")(bot, sessionId, guild)
+    session = await _dep("service").getSession(sessionId)
+    if not session:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="Orientation session could not be found."
+        )
+    attendees = _dep("bgCandidates")(await _dep("service").getAttendees(sessionId))
+    if not attendees:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="No passing attendees need a BGC spreadsheet."
+        )
+    return await _createAndRouteSpreadsheet(
+        bot,
+        guild,
+        session=session,
+        attendees=list(attendees),
+        consumedSessionId=int(sessionId),
+        sessionLabel=str(int(sessionId)),
+    )
+
+
+def _positiveUserIds(userIds: Any) -> list[int]:
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for rawUserId in list(userIds or []):
+        if isinstance(rawUserId, bool):
+            continue
+        try:
+            userId = int(rawUserId)
+        except (TypeError, ValueError):
+            continue
+        if userId <= 0 or userId in seen:
+            continue
+        seen.add(userId)
+        normalized.append(userId)
+    return normalized
+
+
+async def routeExternalOrientationSpreadsheet(
+    bot: discord.Client,
+    guild: discord.Guild | None,
+    *,
+    requestId: str,
+    hostId: int,
+    passedUserIds: Any,
+    guildId: int = 0,
+    hostName: str = "",
+    channelId: int = 0,
+    messageId: int = 0,
+) -> bgSpreadsheetQueue.BgSpreadsheetResult:
+    """Create the BGC sheet for an orientation that was run outside Jane (John Clanker).
+
+    Jane does not have to be a member of the server the orientation ran in: guild may be
+    None, and guildId then identifies the server for config, RoVer lookups and /bg-add.
+    There is no Jane session row, so /bg-add users are consumed against session id 0
+    and no review buckets are assigned.
+    """
+    resolvedGuildId = int(guildId or getattr(guild, "id", 0) or 0)
+    if resolvedGuildId <= 0:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="Orientation guild was not provided."
+        )
+    userIds = _positiveUserIds(passedUserIds)
+    if not userIds:
+        return bgSpreadsheetQueue.BgSpreadsheetResult(
+            skipped_reason="No passing attendees need a BGC spreadsheet."
+        )
+    session = {
+        "sessionId": str(requestId),
+        "guildId": resolvedGuildId,
+        "channelId": int(channelId or 0),
+        "messageId": int(messageId or 0),
+        "hostId": int(hostId or 0),
+        "hostName": str(hostName or "").strip(),
+    }
+    return await _createAndRouteSpreadsheet(
+        bot,
+        guild,
+        session=session,
+        attendees=[{"userId": userId} for userId in userIds],
+        consumedSessionId=0,
+        sessionLabel=f"John {requestId}",
+    )

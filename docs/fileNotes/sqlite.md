@@ -118,12 +118,12 @@ These power division application submission, review, hub messages, and event his
 
 These store scanned ribbon catalog metadata, user ribbon profiles, request state, proof attachments, and request event history.
 
-### Training Logs / Event Ingest
+### Legacy: Training Logs / Event Ingest
 
 - `john_event_log_messages`
 - `training_result_logs`
 
-These support John/event-log ingestion, training result mirroring, and host stats.
+These are legacy tables. The training log mirror and John event ingest were removed, nothing writes to them any more, and existing rows are left in place.
 
 ### Staff / Workflow Features
 

@@ -16,10 +16,7 @@ The updater exists so the production bot can pull safe code updates without tram
 ## Main Config
 
 - `JANE_ENABLE_AUTO_GIT_UPDATE`
-  Enables scheduled update checks. If this is not set to `1`, the background updater will not run. Manual `/restart` can still check/pull GitHub unless disabled separately.
-
-- `JANE_DISABLE_GIT_PULL_ON_RESTART`
-  Disables the manual `/restart` GitHub check/pull. By default, `/restart` checks GitHub and pulls safe code updates before restarting.
+  Enables scheduled update checks. If this is not set to `1`, the background updater will not run.
 
 - `autoGitUpdateRemote`
   Defaults to `origin`.
@@ -48,6 +45,22 @@ The updater exists so the production bot can pull safe code updates without tram
 - `autoGitUpdatePreservePaths`
   Extra runtime paths to preserve during pull. These extend the built-in defaults.
 
+- `autoGitUpdateBackupDir`
+  Where the pre-pull backup of preserved paths is written. Empty means a `.jane-git-update` folder beside the repo, on the same disk. A relative value is resolved against the repo's parent folder. The folder must be outside the repo, and it must be on a real disk: do not point it at `/tmp` or any other RAM-backed filesystem.
+
+## Backup Location And Leftovers
+
+Before pulling, Jane copies every preserved path into a fresh `jane-git-update-*` folder and removes it when the update finishes. Preserved data can run to gigabytes.
+
+The backup used to go to the system temp directory. On a server where `/tmp` is tmpfs that means RAM: a large backup exhausted memory, the kernel killed Jane mid-update, the folder was never cleaned up, and every later start was killed again because the leftover folder still held the memory. The backup now goes beside the repo instead.
+
+Two guards go with that:
+
+- Jane measures the preserved paths first and refuses to start the backup if the target disk does not have room for it. The update fails with `Not enough free space` in the log and Jane keeps running on the current code.
+- If the copy fails part-way, the partial folder is removed. Nothing has been pulled or deleted at that point.
+
+A folder can still be left behind if Jane is killed outright during an update. At startup she logs a warning listing any `jane-git-update-*` folder she finds in the backup location or the system temp directory. She does not delete them herself, because after an interrupted restore that folder can be the only copy of a preserved file. Compare it against the live repo, copy back anything missing, then remove it.
+
 ## Always-Preserved Paths
 
 These are always treated as local runtime state:
@@ -65,7 +78,6 @@ The default preserved folders are:
 
 - `backups/serverSnapshots`
 - `backups/serverSnapshotsOffsite`
-- `runtime/data/copyserver`
 
 Dirty files under preserved paths do not block the update. They are backed up before pull and restored afterward.
 
@@ -115,15 +127,9 @@ Dirty snapshot or database files should not block the whole pull.
 12. Drop the temporary stash.
 13. Restart Jane if code changed.
 
-## Manual Restart Flow
+## Manual Restarts
 
-Manual `/restart` checks GitHub by default. It is treated as a deploy/update command, not a generic reboot button.
-
-If safe code changes are available, Jane pulls them, syncs dependencies if needed, signals the API task to stop, closes Discord, and relaunches.
-
-If `JANE_DISABLE_GIT_PULL_ON_RESTART=1`, Jane cancels the restart instead of rebooting without an update.
-
-If there are no GitHub code changes, local commits, blocking dirty files, network failures, or other unsafe conditions, Jane cancels the restart and stays online.
+The `/restart` slash command and the manual restart flow behind it have been removed. Restart Jane from the host. Only the scheduled updater pulls from GitHub.
 
 ## Failure Recovery
 
@@ -149,7 +155,7 @@ If a log says a temporary stash was kept, inspect it before doing any destructiv
   Check whether the assignment was renamed or removed upstream. Missing names are logged.
 
 - Pull works manually but not through Jane.
-  Check `JANE_DISABLE_GIT_PULL_ON_RESTART`, branch config, Git availability, and whether Jane is paused.
+  Check branch config, Git availability, and whether Jane is paused.
 
 - Jane's terminal shows `gitEnabled no`.
   Scheduled auto-update is off. Set `JANE_ENABLE_AUTO_GIT_UPDATE=1` on the host if you want background pulls.

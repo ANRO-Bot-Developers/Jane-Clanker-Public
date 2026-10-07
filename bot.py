@@ -51,12 +51,11 @@ from features.staff.recruitment import (
     service as recruitmentService,
     sheets as recruitmentSheets,
 )
-from features.staff.trainingLog import trainingLogService
 from features.staff.sessions import (
     service as sessionService,
     views as sessionViews,
 )
-from features.staff.sessions.Roblox import robloxTransport, robloxUsers
+from features.staff.sessions.Roblox import robloxTransport
 from runtime import (
     auditStream as runtimeAuditStream,
     backups as runtimeBackups,
@@ -75,7 +74,6 @@ from runtime import (
     helpCommands as runtimeHelpCommands,
     interaction as interactionRuntime,
     janeIdentityWeb as runtimeJaneIdentityWeb,
-    johnEventRuntime as runtimeJohnEventRuntime,
     maintenance as runtimeMaintenance,
     messageRouting as runtimeMessageRouting,
     metricsExport as runtimeMetricsExport,
@@ -93,9 +91,7 @@ from runtime import (
     taskStats as runtimeTaskStats,
     taskSupervisor as runtimeTaskSupervisor,
     textCommands as runtimeTextCommands,
-    trainingLogRuntime as runtimeTrainingLogRuntime,
     webhookHealth as runtimeWebhookHealth,
-    webhooks as runtimeWebhooks,
 )
 from silly import commands as sillyCommands
 
@@ -109,35 +105,12 @@ runtimeProcessControl = _privateServices.processControlModule
 
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True
 
-botClient = commands.Bot(command_prefix="!", intents=intents)
+botClient = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 interactionRuntime.installRetrySafeInteractionLayer()
 _botStartedAt = datetime.now(timezone.utc)
-_lockedPrefixCommandTokens = {
-    "!kill",
-    "!skin",
-    "?janeruntime",
-    "?bgleaderboard",
-    "?bg-leaderboard",
-    "?perm-sim",
-    "?permsim",
-    "?ruid",
-    "?cpurgejane",
-    "!pairdbnames",
-    "!janeflagsync",
-}
-_manualTextCommandTokens = _lockedPrefixCommandTokens | {
-    "!casinotoggle",
-    "!janeterminal",
-    "!viewallchannels",
-    ":)help",
-    "?trainingstats",
-    "?hoststats",
-}
 _runtimeControlAllowedWhilePaused = {
     "pause",
-    "restart",
 }
 _runtimePausedMessage = "Jane is currently paused. Use /pause again to resume actions."
 _commandPausedDefaultMessage = "This command is paused right now. Please try again later."
@@ -237,8 +210,6 @@ _janeIdentityWebServer: runtimeJaneIdentityWeb.JaneIdentityWebServer | None = No
 _botProfileBioStarted = False
 
 
-_formatUptime = runtimeProcessResources.formatUptime
-_discordTimestamp = runtimeProcessResources.discordTimestamp
 
 
 def _getProcessResourceSnapshot(nowUtc: datetime) -> dict[str, str]:
@@ -267,28 +238,6 @@ _janeIdentityWebServer = runtimeJaneIdentityWeb.JaneIdentityWebServer(
     configModule=config,
     botClient=botClient,
 )
-_trainingLogCoordinator = trainingLogService.TrainingLogCoordinator(
-    botClient=botClient,
-    configModule=config,
-    taskBudgeter=taskBudgeter,
-    recruitmentService=recruitmentService,
-    webhookModule=runtimeWebhooks,
-)
-_trainingLogRuntime = runtimeTrainingLogRuntime.TrainingLogRuntime(
-    botClient=botClient,
-    configModule=config,
-    taskBudgeter=taskBudgeter,
-    coordinator=_trainingLogCoordinator,
-)
-_johnEventCoordinator = runtimeJohnEventRuntime.JohnEventCoordinator(
-    botClient=botClient,
-    configModule=config,
-    taskBudgeter=taskBudgeter,
-    orbatSheets=orbatSheets,
-    robloxUsersModule=robloxUsers,
-    orbatAuditRuntime=runtimeOrbatAudit,
-    privateExtensionsEnabled=_privateServices.privateExtensionsEnabled,
-)
 
 
 def _startBotProfileBioTask() -> None:
@@ -307,13 +256,6 @@ def _startBotProfileBioTask() -> None:
         ),
         name="jane-profile-bio-update",
     )
-
-
-def _orbatWeeklyScheduleConfig() -> tuple[int, int, int]:
-    hour = int(getattr(config, "orbatOrganizationUtcHour", 3))
-    minute = int(getattr(config, "orbatOrganizationUtcMinute", 0))
-    weekday = int(getattr(config, "orbatOrganizationUtcWeekday", 6))
-    return hour, minute, weekday
 
 
 def _nonRecruitmentOrbatWritesEnabled() -> bool:
@@ -507,53 +449,6 @@ async def _scheduleRoleBasedOrbatSync(member: discord.Member, guildId: int) -> N
     await taskBudgeter.runBackground(lambda: _maybeSyncRoleBasedOrbats(member, guildId))
 
 
-async def _postRuntimeWebhookMessage(
-    message: discord.Message,
-    embed: discord.Embed,
-) -> bool:
-    return await runtimeWebhooks.sendOwnedWebhookMessage(
-        botClient=botClient,
-        channel=message.channel,
-        webhookName="Jane Runtime",
-        embed=embed,
-        username="Jane Runtime",
-        avatarUrl=botClient.user.display_avatar.url if botClient.user else None,
-        reason="Runtime diagnostics command",
-    )
-
-
-async def _postTerminalWebhookMessage(
-    message: discord.Message,
-    content: str,
-) -> bool:
-    return await runtimeWebhooks.sendOwnedWebhookMessage(
-        botClient=botClient,
-        channel=message.channel,
-        webhookName="Jane Terminal",
-        content=content,
-        username="Jane Terminal",
-        avatarUrl=botClient.user.display_avatar.url if botClient.user else None,
-        reason="Read-only terminal diagnostics command",
-    )
-
-
-async def _postCopyServerWebhookMessage(
-    message: discord.Message,
-    content: str,
-    view: discord.ui.View,
-) -> bool:
-    return await runtimeWebhooks.sendOwnedWebhookMessage(
-        botClient=botClient,
-        channel=message.channel,
-        webhookName="Jane Copyserver",
-        content=content,
-        view=view,
-        username="Jane Copyserver",
-        avatarUrl=botClient.user.display_avatar.url if botClient.user else None,
-        reason="Hidden copyserver confirmation",
-    )
-
-
 def _hasCohostPermission(member: discord.Member) -> bool:
     return runtimePermissions.hasCohostPermission(member)
 
@@ -570,106 +465,12 @@ def _isGuildAllowedForCommands(guildId: int | None) -> bool:
     return guildId in _allowedCommandGuildIds
 
 
-def _persistAllowedCommandGuildId(guildId: int) -> bool:
-    settingsPath = Path(__file__).resolve().parent / "settings" / "core.py"
-    source = settingsPath.read_text(encoding="utf-8")
-    newline = "\r\n" if "\r\n" in source else "\n"
-    lines = source.splitlines()
-
-    startIndex = -1
-    endIndex = -1
-    for index, line in enumerate(lines):
-        if line.strip() == "allowedCommandGuildIds = [":
-            startIndex = index
-            continue
-        if startIndex >= 0 and line.strip() == "]":
-            endIndex = index
-            break
-
-    if startIndex < 0 or endIndex <= startIndex:
-        raise RuntimeError("allowedCommandGuildIds block not found in settings/core.py")
-
-    for line in lines[startIndex + 1 : endIndex]:
-        raw = str(line or "").strip().rstrip(",")
-        try:
-            parsed = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if parsed == int(guildId):
-            return False
-
-    lines.insert(endIndex, f"    {int(guildId)},")
-    trailingNewline = newline if source.endswith(("\n", "\r\n")) else ""
-    settingsPath.write_text(newline.join(lines) + trailingNewline, encoding="utf-8")
-    return True
-
-
-def _allowGuildForCommands(guildId: int | None) -> str:
-    if guildId is None:
-        return "invalid"
-    try:
-        guildIdInt = int(guildId)
-    except (TypeError, ValueError):
-        return "invalid"
-    if guildIdInt <= 0:
-        return "invalid"
-
-    configuredGuildIds: list[int] = []
-    for raw in (getattr(config, "allowedCommandGuildIds", []) or []):
-        try:
-            parsed = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if parsed > 0:
-            configuredGuildIds.append(parsed)
-    alreadyAllowed = guildIdInt in _allowedCommandGuildIds and guildIdInt in configuredGuildIds
-
-    if guildIdInt not in _allowedCommandGuildIds:
-        _allowedCommandGuildIds.add(guildIdInt)
-    if guildIdInt not in configuredGuildIds:
-        configuredGuildIds.append(guildIdInt)
-        setattr(config, "allowedCommandGuildIds", configuredGuildIds)
-    runtimePermissions.clearPermissionCaches()
-
-    if alreadyAllowed:
-        return "already"
-
-    try:
-        wroteConfig = _persistAllowedCommandGuildId(guildIdInt)
-    except Exception:
-        logging.exception("Failed to persist allowed command guild %s into settings/core.py.", guildIdInt)
-        return "runtime-only"
-
-    return "added" if wroteConfig else "already"
-
-
 def _getTextCommandRouter() -> runtimeTextCommands.TextCommandRouter:
     global _textCommandRouter
     if _textCommandRouter is None:
         _textCommandRouter = runtimeTextCommands.TextCommandRouter(
             botClient=botClient,
             configModule=config,
-            sessionService=sessionService,
-            sessionViews=sessionViews,
-            taskBudgeter=taskBudgeter,
-            helpCommandsModule=runtimeHelpCommands,
-            permissionsModule=runtimePermissions,
-            maintenanceCoordinator=_maintenanceCoordinator,
-            botStartedAt=_botStartedAt,
-            formatUptime=_formatUptime,
-            discordTimestamp=_discordTimestamp,
-            getProcessResourceSnapshot=_getProcessResourceSnapshot,
-            sendRuntimeWebhookMessage=_postRuntimeWebhookMessage,
-            sendTerminalWebhookMessage=_postTerminalWebhookMessage,
-            sendCopyServerWebhookMessage=_postCopyServerWebhookMessage,
-            hasCohostPermission=_hasCohostPermission,
-            isGuildAllowedForCommands=_isGuildAllowedForCommands,
-            allowGuildForCommands=_allowGuildForCommands,
-            orbatWeeklyScheduleConfig=_orbatWeeklyScheduleConfig,
-            trainingLogCoordinator=_trainingLogCoordinator,
-            serverSafetyService=_privateServices.serverSafetyService,
-            gitUpdateCoordinator=_gitUpdateCoordinator,
-            generalErrorLogPath=str(getattr(botClient, "runtimeServices", {}).get("generalErrorLogPath", "") or ""),
         )
     return _textCommandRouter
 
@@ -684,13 +485,10 @@ def _getHumanMessageRouter() -> runtimeMessageRouting.HumanMessageRouter:
             orgFeatureGateModule=runtimeOrgFeatureGate,
             sillyCommandsModule=sillyCommands,
             textCommandRouterProvider=_getTextCommandRouter,
-            trainingStatsHandler=_trainingLogCoordinator.handleTrainingStats,
             hasCohostPermission=_hasCohostPermission,
             isCommandExecutionAllowed=_isCommandExecutionAllowed,
             isGuildAllowedForCommands=_isGuildAllowedForCommands,
             mirrorUnapprovedGuildCommandAttempt=_mirrorUnapprovedGuildCommandAttempt,
-            manualTextCommandTokens=_manualTextCommandTokens,
-            lockedPrefixCommandTokens=_lockedPrefixCommandTokens,
             messages=runtimeMessageRouting.MessageRoutingMessages(
                 runtimePaused=_runtimePausedMessage,
                 serverNotRecognized=_serverNotRecognizedMessage,
@@ -743,18 +541,9 @@ async def setup_hook() -> None:
         "auditStream": _auditStream,
         "metricsExporter": _metricsExporter,
         "webhookHealthWatcher": _webhookHealthWatcher,
-        "johnEventCoordinator": _johnEventCoordinator,
         "janeIdentityWebServer": _janeIdentityWebServer,
         "gitUpdateCoordinator": _gitUpdateCoordinator,
         "generalErrorLogPath": runtimeErrorLogging.currentProcessLogSummary(configModule=config),
-        "createBgCheckQueue": (
-            lambda *, guild, channel, actor, sourceMessage=None: _getTextCommandRouter().createBgCheckQueue(
-                guild=guild,
-                channel=channel,
-                actor=actor,
-                sourceMessage=sourceMessage,
-            )
-        ),
     }
     await _bootstrapCoordinator.setupHook()
     loadedCommandPauses = await _commandPauseController.loadAll()
@@ -763,63 +552,13 @@ async def setup_hook() -> None:
     await _janeIdentityWebServer.start()
     if _gitUpdateCoordinator is not None:
         _gitUpdateCoordinator.start()
-    _trainingLogRuntime.start()
 
 
 @botClient.event
 async def on_ready() -> None:
     botClient.loop_ref = asyncio.get_running_loop()
     await _bootstrapCoordinator.onReady()
-    logging.info("on_ready reached; ensuring training log startup sync task is running.")
     _startBotProfileBioTask()
-    _trainingLogRuntime.start()
-    _johnEventCoordinator.start()
-
-
-@botClient.check
-async def prefixCommandSafetyCheck(ctx: commands.Context) -> bool:
-    guildId = int(getattr(getattr(ctx, "guild", None), "id", 0) or 0)
-    if not _isGuildAllowedForCommands(guildId):
-        if guildId > 0:
-            _runtimeTaskSupervisor.create(
-                _mirrorUnapprovedGuildCommandAttempt(
-                    commandName=str(getattr(getattr(ctx, "command", None), "qualified_name", "unknown")),
-                    userLabel=str(getattr(ctx, "author", "Unknown User")),
-                    userId=int(getattr(getattr(ctx, "author", None), "id", 0) or 0),
-                    guildName=str(getattr(getattr(ctx, "guild", None), "name", "Unknown Server")),
-                    guildId=guildId,
-                ),
-                name=f"prefix-guild-lock-alert:{guildId}",
-            )
-        try:
-            await ctx.reply(
-                _serverNotRecognizedMessage,
-                mention_author=False,
-            )
-        except Exception:
-            pass
-        return False
-    commandName = str(getattr(getattr(ctx, "command", None), "qualified_name", "") or getattr(getattr(ctx, "command", None), "name", "") or "").strip().lower()
-    orgFeatureEnabled, orgFeatureKey = runtimeOrgFeatureGate.isCommandEnabledForGuild(config, guildId, commandName)
-    if not orgFeatureEnabled:
-        try:
-            await ctx.reply(
-                f"{_organizationFeatureUnavailableMessage} (`{orgFeatureKey}`)",
-                mention_author=False,
-            )
-        except Exception:
-            pass
-        return False
-    if _isCommandExecutionAllowed(int(ctx.author.id)):
-        return True
-    try:
-        await ctx.reply(
-            _temporaryLockMessage,
-            mention_author=False,
-        )
-    except Exception:
-        pass
-    return False
 
 
 async def interactionSafetyCheck(interaction: discord.Interaction) -> bool:
@@ -985,8 +724,6 @@ async def _runRuntimeCleanupServices() -> None:
     await _runCleanupStep("feature flag refreshes", _featureFlags.stop)
     await _runCleanupStep("Jane Identity web callback", _janeIdentityWebServer.stop)
     await _runCleanupStep("gambling API", _gamblingApiServer.stop)
-    await _runCleanupStep("John event backfill", _johnEventCoordinator.stop)
-    await _runCleanupStep("training log tasks", _trainingLogRuntime.stop)
     if _humanMessageRouter is not None:
         await _runCleanupStep("human message routing tasks", _humanMessageRouter.stop)
     await _runCleanupStep("supervised runtime tasks", _runtimeTaskSupervisor.stop)
@@ -1030,29 +767,10 @@ async def on_close() -> None:
 
 @botClient.event
 async def on_message(message: discord.Message) -> None:
-    _trainingLogRuntime.scheduleCapture(message)
-    if not message.author.bot:
-        await _getHumanMessageRouter().handle(message)
+    if message.author.bot:
         return
-    parsedEvents = await _johnEventCoordinator.parse(message)
-    for event in parsedEvents:
-        try:
-            await _johnEventCoordinator.handleIngestedEvent(message, event)
-        except Exception:
-            logging.exception(
-                "Event ingest handler failed (source=%s type=%s message=%s).",
-                event.source,
-                event.eventType,
-                message.id,
-            )
-    return await botClient.process_commands(message)
+    await _getHumanMessageRouter().handle(message)
 
-
-@botClient.event
-async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
-    if int(getattr(before, "id", 0) or 0) != int(getattr(after, "id", 0) or 0):
-        return
-    _trainingLogRuntime.scheduleCapture(after)
 
 @botClient.listen("on_interaction")
 async def handleRobloxRetry(interaction: discord.Interaction) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,8 +19,11 @@ class MessageRoutingMessages:
     temporaryLock: str
 
 
+_MENTION_COMMANDS = frozenset({"kill", "skin"})
+
+
 class HumanMessageRouter:
-    """Route non-bot messages while preserving Jane's legacy command order."""
+    """Route non-bot messages. Only DMs and messages that mention Jane carry text."""
 
     def __init__(
         self,
@@ -31,13 +34,10 @@ class HumanMessageRouter:
         orgFeatureGateModule,
         sillyCommandsModule,
         textCommandRouterProvider: Callable[[], Any],
-        trainingStatsHandler: Callable[[discord.Message], Awaitable[bool]],
         hasCohostPermission: Callable[[discord.Member], bool],
         isCommandExecutionAllowed: Callable[[int], bool],
         isGuildAllowedForCommands: Callable[[int], bool],
         mirrorUnapprovedGuildCommandAttempt: Callable[..., Awaitable[None]],
-        manualTextCommandTokens: Collection[str],
-        lockedPrefixCommandTokens: Collection[str],
         messages: MessageRoutingMessages,
     ) -> None:
         self.botClient = botClient
@@ -46,13 +46,10 @@ class HumanMessageRouter:
         self.orgFeatureGate = orgFeatureGateModule
         self.sillyCommands = sillyCommandsModule
         self.textCommandRouterProvider = textCommandRouterProvider
-        self.trainingStatsHandler = trainingStatsHandler
         self.hasCohostPermission = hasCohostPermission
         self.isCommandExecutionAllowed = isCommandExecutionAllowed
         self.isGuildAllowedForCommands = isGuildAllowedForCommands
         self.mirrorUnapprovedGuildCommandAttempt = mirrorUnapprovedGuildCommandAttempt
-        self.manualTextCommandTokens = frozenset(manualTextCommandTokens)
-        self.lockedPrefixCommandTokens = frozenset(lockedPrefixCommandTokens)
         self.messages = messages
         self._backgroundTasks: set[asyncio.Task] = set()
 
@@ -100,36 +97,6 @@ class HumanMessageRouter:
 
         task.add_done_callback(_done)
 
-    async def _handlePaused(
-        self,
-        message: discord.Message,
-        *,
-        token: str,
-        guildId: int,
-        textRouter,
-    ) -> None:
-        if not await self._passesOrganizationGate(message, guildId, token):
-            return
-
-        pausedHandlers = {
-            "!allowserver": textRouter.handleAllowServer,
-            "!copyserver": textRouter.handleCopyServer,
-            "!shutdown": textRouter.handleShutdown,
-            "!mirrortraininghistory": textRouter.handleMirrorTrainingHistory,
-            "!janeterminal": textRouter.handleJaneTerminal,
-        }
-        handler = pausedHandlers.get(token)
-        if handler is not None and await handler(message):
-            return
-
-        if token in self.manualTextCommandTokens or token in self.lockedPrefixCommandTokens:
-            await self._sendQuietly(message, self.messages.runtimePaused)
-            return
-
-        context = await self.botClient.get_context(message)
-        if context.command is not None:
-            await self._sendQuietly(message, self.messages.runtimePaused)
-
     async def _rejectUnapprovedGuild(
         self,
         message: discord.Message,
@@ -150,92 +117,50 @@ class HumanMessageRouter:
             )
         await self._sendQuietly(message, self.messages.serverNotRecognized)
 
-    async def _handleActive(
-        self,
-        message: discord.Message,
-        *,
-        token: str,
-        guildId: int,
-        textRouter,
-    ) -> None:
-        if not await self._passesOrganizationGate(message, guildId, token):
+    async def _handleMentionCommand(self, message: discord.Message, word: str, rest: str) -> None:
+        guildId = self._guildId(message)
+        if not await self._passesOrganizationGate(message, guildId, f"!{word}"):
             return
-        if await textRouter.handleAllowServer(message):
+        if not self.isGuildAllowedForCommands(guildId):
+            await self._rejectUnapprovedGuild(message, token=word, guildId=guildId)
             return
-        if await textRouter.handleMirrorTrainingHistory(message):
+        if self.pauseController.isPaused():
+            await self._sendQuietly(message, self.messages.runtimePaused)
             return
-
-        if token in self.manualTextCommandTokens and not self.isGuildAllowedForCommands(guildId):
-            await self._rejectUnapprovedGuild(message, token=token, guildId=guildId)
-            return
-
-        await self.sillyCommands.maybeHandleSillyMentions(message, self.botClient)
-        if await textRouter.handleJaneHelp(message):
-            return
-        if await textRouter.handleViewAllChannels(message):
-            return
-
         if not self.isCommandExecutionAllowed(int(message.author.id)):
-            if token in self.lockedPrefixCommandTokens:
-                await message.channel.send(self.messages.temporaryLock)
-                return
-            await self.botClient.process_commands(message)
+            await self._sendQuietly(message, self.messages.temporaryLock)
             return
-
-        if await self.sillyCommands.maybeHandleSixtySevenSpam(message):
+        if word == "kill":
+            await self.sillyCommands.handleKillMention(message, self.botClient, rest)
             return
-        if await self.sillyCommands.handleSkinCommand(
+        await self.sillyCommands.handleSkinMention(
             message,
             self.botClient,
+            rest,
             hasSkinPermission=self.hasCohostPermission,
-        ):
-            return
-        if await self.sillyCommands.handleKillCommand(message, self.botClient):
-            return
-        if await self.sillyCommands.handleCasinoToggleCommand(message):
-            return
-
-        orderedHandlers = (
-            textRouter.handleUsernameToUserId,
-            textRouter.handleChannelPurge,
-            textRouter.handlePairDbNamesCommand,
-            self.trainingStatsHandler,
-            textRouter.handleJaneTerminal,
-            textRouter.handleShutdown,
-            textRouter.handleCopyServer,
-            textRouter.handleJaneRuntime,
-            textRouter.handleBgLeaderboardCommand,
-            textRouter.handleJaneFlagSync,
-            textRouter.handlePermissionSimulatorCommand,
         )
-        for handler in orderedHandlers:
-            if await handler(message):
-                return
-        await self.botClient.process_commands(message)
 
     async def handle(self, message: discord.Message) -> None:
         textRouter = self.textCommandRouterProvider()
-        textRouter.noteCopyServerWarningMessage(message)
         await textRouter.handlePotatoGreeting(message)
         if await textRouter.handleJaneSecrets(message):
             return
 
-        token = textRouter.firstLowerToken(message.content or "")
-        guildId = self._guildId(message)
-        if self.pauseController.isPaused():
-            await self._handlePaused(
-                message,
-                token=token,
-                guildId=guildId,
-                textRouter=textRouter,
-            )
+        botUser = getattr(self.botClient, "user", None)
+        if botUser is None:
             return
-        await self._handleActive(
-            message,
-            token=token,
-            guildId=guildId,
-            textRouter=textRouter,
-        )
+        if not any(int(user.id) == int(botUser.id) for user in message.mentions):
+            return
+
+        word, rest = self.sillyCommands.parseMentionCommand(message.content or "", int(botUser.id))
+        if word in _MENTION_COMMANDS:
+            # kill/skin need a server; silly replies below also work in DMs.
+            if getattr(message, "guild", None) is not None:
+                await self._handleMentionCommand(message, word, rest)
+            return
+        if self.pauseController.isPaused():
+            return
+        await self.sillyCommands.maybeHandleSillyMentions(message, self.botClient)
 
     async def stop(self) -> None:
         tasks = set(self._backgroundTasks)

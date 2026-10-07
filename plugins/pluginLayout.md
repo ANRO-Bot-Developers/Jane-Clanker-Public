@@ -19,11 +19,6 @@ The current startup flow loads:
 
 Private extensions are only loaded when `config.enablePrivateExtensions` is truthy.
 
-Destructive private actions should also require:
-
-- `ENABLE_DESTRUCTIVE_COMMANDS=1`
-- an allowed user
-- an allowed guild from `config.destructiveCommandGuildIds`
-- surviving the shared destructive-action cooldown
+Jane no longer ships a shared destructive-action gate. A private extension that adds a destructive action has to bring its own allowed-user check, allowed-guild check, and cooldown.
 
 This keeps Jane's current layout stable while giving the repo a clear place to move public-safe and private-only extensions over time.

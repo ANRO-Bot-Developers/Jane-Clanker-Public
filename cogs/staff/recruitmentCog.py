@@ -19,6 +19,7 @@ import config
 from features.staff.recruitment import rendering as recruitmentRendering
 from features.staff.recruitment import service as recruitmentService
 from runtime import commandScopes as runtimeCommandScopes
+from runtime import evidenceUpload
 from runtime import interaction as interactionRuntime
 from runtime import normalization
 from runtime import permissions as runtimePermissions
@@ -163,23 +164,28 @@ class RecruitmentCog(commands.Cog):
         )
         return False
 
-    async def _fetchMainAnroMember(self, userId: int) -> Optional[discord.Member]:
+    async def _lookupMainAnroMember(self, userId: int) -> tuple[Optional[discord.Member], str]:
+        # Returns the member (if any) plus a recruitment lookup status for the
+        # review embed. UNAVAILABLE means Jane could not check at all.
         sourceGuildId = _positiveInt(getattr(config, "recruitmentSourceGuildId", getattr(config, "serverId", 0)))
         if sourceGuildId <= 0 or int(userId or 0) <= 0:
-            return None
+            return None, recruitmentRendering.recruitLookupUnavailable
         guild = self.bot.get_guild(sourceGuildId)
         if guild is None:
             try:
                 guild = await taskBudgeter.runDiscord(lambda: self.bot.fetch_guild(sourceGuildId))
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                return None
+                return None, recruitmentRendering.recruitLookupUnavailable
         member = guild.get_member(int(userId))
         if member is not None:
-            return member
+            return member, recruitmentRendering.recruitLookupFound
         try:
-            return await taskBudgeter.runDiscord(lambda: guild.fetch_member(int(userId)))
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return None
+            member = await taskBudgeter.runDiscord(lambda: guild.fetch_member(int(userId)))
+        except discord.NotFound:
+            return None, recruitmentRendering.recruitLookupNotFound
+        except (discord.Forbidden, discord.HTTPException):
+            return None, recruitmentRendering.recruitLookupUnavailable
+        return member, recruitmentRendering.recruitLookupFound
 
     @staticmethod
     def _memberDisplayName(member: discord.Member) -> str:
@@ -262,33 +268,6 @@ class RecruitmentCog(commands.Cog):
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
         return None
-
-    async def _collectTwoImageEvidenceMessage(
-        self,
-        *,
-        channel: discord.abc.Messageable,
-        userId: int,
-        timeoutSec: float = 180.0,
-    ) -> Optional[discord.Message]:
-        channelId = getattr(channel, "id", None)
-        if channelId is None:
-            return None
-
-        def check(message: discord.Message) -> bool:
-            # We only accept the submitter's next message in this channel with
-            # at least two image attachments.
-            if message.author.id != userId:
-                return False
-            if message.channel.id != channelId:
-                return False
-            images = [att for att in message.attachments if _isImageAttachment(att)]
-            return len(images) >= 2
-
-        try:
-            message = await self.bot.wait_for("message", check=check, timeout=timeoutSec)
-        except asyncio.TimeoutError:
-            return None
-        return message
 
     async def _updatePatrolMessage(
         self,
@@ -505,18 +484,18 @@ class RecruitmentCog(commands.Cog):
                 )
                 return
 
-            await interaction.response.send_message(
-                f"Upload two patrol screenshots in <#{evidenceChannelId}> within 3 minutes.",
-                ephemeral=True,
-            )
             # We reuse the evidence collector so solo/group flows behave the same.
-            evidenceMessage = await self._collectTwoImageEvidenceMessage(
-                channel=evidenceChannel,
-                userId=interaction.user.id,
+            evidenceMessage = await evidenceUpload.collectEvidenceUpload(
+                interaction,
+                prompt=f"Upload two patrol screenshots within 3 minutes. They will be posted in <#{evidenceChannel.id}>.",
+                evidenceChannel=evidenceChannel,
+                minFiles=2,
+                maxFiles=10,
+                modalTitle="Patrol screenshots",
             )
             if evidenceMessage is None:
                 await interaction.followup.send(
-                    "Timed out waiting for two image screenshots. Patrol is still open.",
+                    "No valid upload was received in time. Patrol is still open.",
                     ephemeral=True,
                 )
                 return
@@ -631,13 +610,10 @@ class RecruitmentCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        recruitMember = await self._fetchMainAnroMember(recruitUserId)
-        if recruitMember is None:
-            await interaction.followup.send(
-                "That user ID is incorrect, or that user is not in the ANRO server.",
-                ephemeral=True,
-            )
-            return
+        # Membership is not enforced here; the lookup result is only shown on
+        # the review embed so reviewers know whether to verify manually.
+        recruitMember, recruitLookupStatus = await self._lookupMainAnroMember(recruitUserId)
+        recruitDisplayName = self._memberDisplayName(recruitMember) if recruitMember is not None else ""
 
         basePoints = int(getattr(config, "recruitmentPointsBase", 2) or 2)
         submissionId = await recruitmentService.createRecruitmentSubmission(
@@ -648,7 +624,8 @@ class RecruitmentCog(commands.Cog):
             passedOrientation=False,
             imageUrls=imageUrls,
             points=basePoints,
-            recruitDisplayName=self._memberDisplayName(recruitMember),
+            recruitDisplayName=recruitDisplayName,
+            recruitLookupStatus=recruitLookupStatus,
         )
         submission = await recruitmentService.getRecruitmentSubmission(submissionId)
         if not submission:
@@ -825,17 +802,17 @@ class RecruitmentCog(commands.Cog):
             await interaction.response.send_message(durationError, ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            "Upload two patrol screenshots in your next message in this channel within 3 minutes.",
-            ephemeral=True,
-        )
-        evidenceMessage = await self._collectTwoImageEvidenceMessage(
-            channel=interaction.channel,
-            userId=interaction.user.id,
+        evidenceMessage = await evidenceUpload.collectEvidenceUpload(
+            interaction,
+            prompt="Upload two patrol screenshots within 3 minutes. They will be posted in this channel.",
+            evidenceChannel=interaction.channel,
+            minFiles=2,
+            maxFiles=10,
+            modalTitle="Patrol screenshots",
         )
         if evidenceMessage is None:
             await interaction.followup.send(
-                "Timed out waiting for two image screenshots. Submit the command again when ready.",
+                "No valid upload was received in time. Submit the command again when ready.",
                 ephemeral=True,
             )
             return

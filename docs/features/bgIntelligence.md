@@ -345,8 +345,6 @@ The severity dropdown is intentionally approximate: `Light`, `Medium`, `High`, o
 
 Exact `item` proposals have an extra constraint: Jane expects them to resolve to a valid Roblox thumbnail before she posts the vote. While the proposal remains active, the exact rule drives exact-ID matching, and the validated thumbnail hash feeds visual similarity matching.
 
-Developer maintenance command: `!JaneFlagSync [all|history-limit]` scans the configured BG item review channel for historical Jane flag vote embeds, imports non-rejected rules into `bg_flag_rules`, and forces item visual-reference validation so catalog item rules rebuild their thumbnail hash and color signature rows. The command is intentionally hidden and developer-gated.
-
 ## Safe Edit Notes
 
 - Do not make the score auto-reject users. Keep it as triage.
