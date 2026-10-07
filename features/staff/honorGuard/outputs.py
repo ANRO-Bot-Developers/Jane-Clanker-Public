@@ -15,6 +15,9 @@ from runtime import orbatAudit as orbatAuditRuntime
 
 log = logging.getLogger(__name__)
 
+DISCORD_EMBED_FIELD_VALUE_LIMIT = 1024
+DISCORD_EMBED_FIELD_LIMIT = 25
+DISCORD_EMBED_TOTAL_LIMIT = 6000
 
 async def postHonorGuardLogEmbed(
     botClient: discord.Client,
@@ -167,6 +170,48 @@ def _clipFieldValue(text: str, *, limit: int = 1024) -> str:
         return text
     return text[: limit - 1] + "…"
 
+def _splitAuditLogs(
+    values: Sequence[str],
+) -> list[str]:
+    chunks: list[str] = []
+    currentLines: list[str] = []
+    currentLength = 0
+
+    for value in values:
+        value = str(value or "").strip()
+
+        if not value:
+            continue
+
+        separatorLength = 2 if currentLines else 0
+        newLength = currentLength + separatorLength + len(value)
+
+        if newLength <= DISCORD_EMBED_FIELD_VALUE_LIMIT:
+            currentLines.append(value)
+            currentLength = newLength
+            continue
+
+        if currentLines:
+            chunks.append("\n\n".join(currentLines))
+
+        if len(value) > DISCORD_EMBED_FIELD_VALUE_LIMIT:
+            start = 0
+
+            while start < len(value):
+                end = start + DISCORD_EMBED_FIELD_VALUE_LIMIT
+                chunks.append(value[start:end])
+                start = end
+
+            currentLines = []
+            currentLength = 0
+        else:
+            currentLines = [value]
+            currentLength = len(value)
+
+    if currentLines:
+        chunks.append("\n\n".join(currentLines))
+
+    return chunks
 
 async def sendHonorGuardSheetAudit(
     botClient: discord.Client,
@@ -178,32 +223,115 @@ async def sendHonorGuardSheetAudit(
     details: str = "",
     auditLogs: Optional[Sequence[str]] = None,
 ) -> None:
-    reviewerText = f"<@{int(reviewerId)}>" if int(reviewerId or 0) > 0 else "system"
-    embed = discord.Embed(
-        title="Honor-Guard Sheet Audit",
-        color=discord.Color.dark_teal(),
-        timestamp=datetime.now(tz=timezone.utc),
+    reviewerText = (
+        f"<@{int(reviewerId)}>"
+        if int(reviewerId or 0) > 0
+        else "system"
     )
-    embed.add_field(name="Change", value=str(change or "Unknown"), inline=False)
-    embed.add_field(
-        name="Requested By",
-        value=str(requestedBy or "").strip() or reviewerText,
-        inline=True,
-    )
-    embed.add_field(name="Authorized By", value=reviewerText, inline=True)
-    requestUrl = str(requestMessageUrl or "").strip()
-    if requestUrl:
+
+    def createBaseEmbed() -> discord.Embed:
+        embed = discord.Embed(
+            title="Honor-Guard Sheet Audit",
+            color=discord.Color.dark_teal(),
+            timestamp=datetime.now(tz=timezone.utc),
+        )
+
         embed.add_field(
-            name="Request Message",
-            value=f"[Open message]({requestUrl})",
+            name="Change",
+            value=str(change or "Unknown"),
             inline=False,
         )
-    if details:
-        embed.add_field(name="Details", value=_clipFieldValue(str(details)), inline=False)
-    logs = [str(line) for line in (auditLogs or []) if str(line or "").strip()]
-    if logs:
-        embed.add_field(name="Changes", value=_clipFieldValue("\n\n".join(logs)), inline=False)
-    await postHonorGuardLogEmbed(botClient, embed=embed)
+
+        embed.add_field(
+            name="Requested By",
+            value=str(requestedBy or "").strip() or reviewerText,
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Authorized By",
+            value=reviewerText,
+            inline=True,
+        )
+
+        requestUrl = str(requestMessageUrl or "").strip()
+
+        if requestUrl:
+            embed.add_field(
+                name="Request Message",
+                value=f"[Open message]({requestUrl})",
+                inline=False,
+            )
+
+        if details:
+            embed.add_field(
+                name="Details",
+                value=_clipFieldValue(str(details)),
+                inline=False,
+            )
+
+        return embed
+
+    logs = [
+        str(line)
+        for line in (auditLogs or [])
+        if str(line or "").strip()
+    ]
+
+    if not logs:
+        await postHonorGuardLogEmbed(
+            botClient,
+            embed=createBaseEmbed(),
+        )
+        return
+
+    changeChunks = _splitAuditLogs(logs)
+
+    embeds: list[discord.Embed] = []
+    currentEmbed = createBaseEmbed()
+    isFirstChangesField = True
+
+    for chunk in changeChunks:
+        fieldName = "Changes" if isFirstChangesField else "\u200b"
+
+        if (
+            len(currentEmbed.fields) >= DISCORD_EMBED_FIELD_LIMIT
+            or len(currentEmbed) + len(fieldName) + len(chunk)
+            > DISCORD_EMBED_TOTAL_LIMIT
+        ):
+            embeds.append(currentEmbed)
+
+            currentEmbed = discord.Embed(
+                title="Honor-Guard Sheet Audit — continued",
+                color=discord.Color.dark_teal(),
+                timestamp=datetime.now(tz=timezone.utc),
+            )
+
+            isFirstChangesField = False
+            fieldName = "Changes" if isFirstChangesField else "\u200b"
+
+        currentEmbed.add_field(
+            name=fieldName,
+            value=chunk,
+            inline=False,
+        )
+
+        isFirstChangesField = False
+
+
+    embeds.append(currentEmbed)
+
+    if len(embeds) > 1:
+        totalEmbeds = len(embeds)
+
+        for index, embed in enumerate(embeds, start=1):
+            embed.title = f"Honor-Guard Sheet Audit — {index}/{totalEmbeds}"
+
+    for embed in embeds:
+        await postHonorGuardLogEmbed(
+            botClient,
+            embed=embed,
+        )
 
 
 async def sendHonorGuardEventChangeLog(
