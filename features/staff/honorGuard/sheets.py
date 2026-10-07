@@ -980,8 +980,6 @@ def _buildApprovedLogBatchData(
             rowData["activityStatus"] = (columns.activityStatus, nextActivityStatus)
         if update.eventDelta != 0:
             rowData["eventPoints"] = (columns.eventPoints, nextEventPoints)
-        if update.platoonDelta != 0:
-            rowData["platoonPoints"] = (columns.platoonPoints, nextPlatoonPoints)
         if nextJuniorExamPassed is not None:
             rowData["juniorExamPassed"] = (columns.juniorExamPassed, nextJuniorExamPassed)
         if nextNcoExamPassed is not None:
